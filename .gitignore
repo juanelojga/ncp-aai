@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ChromaDB (vector store — regeneratable)
+chroma_db/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Obsidian vault (user content, not code)
+NVIDIA-NCP-AAI-Study/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

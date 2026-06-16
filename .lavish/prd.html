@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="luxury">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD — NCP-AAI Personal Agentic Study Engine</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style type="text/tailwindcss">
+  body { font-family: ui-sans-serif, system-ui, sans-serif; }
+  .scroll-fade { scroll-behavior: smooth; }
+  .annotate-hint { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-primary) 18%, transparent), transparent); }
+</style>
+</head>
+<body class="min-h-screen bg-base-200 text-base-content">
+
+<main class="mx-auto max-w-6xl px-4 py-8 lg:py-12">
+
+  <!-- HERO -->
+  <section class="hero rounded-box bg-base-100 shadow-lg border border-base-content/10">
+    <div class="hero-content flex-col lg:flex-row text-center lg:text-left gap-6 p-6 lg:p-10 w-full">
+      <div class="flex-1 min-w-0">
+        <div class="flex flex-wrap items-center justify-center lg:justify-start gap-2 mb-3">
+          <span class="badge badge-primary">PRD · v1.0</span>
+          <span class="badge badge-soft badge-success">Ready to build</span>
+          <span class="badge badge-ghost">Cloud-first · Single-user</span>
+        </div>
+        <h1 class="text-3xl lg:text-5xl font-bold leading-tight">NCP-AAI Personal<br>Agentic Study Engine</h1>
+        <p class="mt-4 text-base-content/70 max-w-2xl">
+          A self-improving study environment for the <b>NVIDIA NCP-AAI</b> certification:
+          Obsidian vault + local RAG (ChromaDB) + autonomous investigator (OpenCode + Hermes) + interactive Lavish study loop.
+        </p>
+      </div>
+      <div class="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+        <div class="card card-border bg-base-200 card-sm"><div class="card-body">
+          <div class="text-xs uppercase tracking-wide text-base-content/50">Problem</div>
+          <p class="text-sm">Fast-moving NVIDIA-specific knowledge is scattered; passive reading yields poor recall & no reusable asset.</p>
+        </div></div>
+        <div class="card card-border bg-base-200 card-sm"><div class="card-body">
+          <div class="text-xs uppercase tracking-wide text-base-content/50">Solution</div>
+          <p class="text-sm">Trigger a topic → agent RAG-checks notes, investigates gaps, writes a structured note + quiz, presents it in Lavish.</p>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KPIs -->
+  <section class="mt-8">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🎯 Success Criteria (KPIs)</h2>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Ultimate</div><div class="stat-value text-primary text-2xl">Pass</div>
+        <div class="stat-desc">NCP-AAI first attempt</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Coverage</div><div class="stat-value text-2xl">100%</div>
+        <div class="stat-desc">Objectives w/ note + ≥3 quiz</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Question bank</div><div class="stat-value text-2xl">≥300</div>
+        <div class="stat-desc">Vetted, cited items</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Readiness gate</div><div class="stat-value text-2xl">≥85%</div>
+        <div class="stat-desc">Mean of last 5 quizzes/domain</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">RAG Precision@5</div><div class="stat-value text-2xl">≥85%</div>
+        <div class="stat-desc">50 held-out queries</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Time-to-note</div><div class="stat-value text-2xl">&lt;5m</div>
+        <div class="stat-desc">Trigger → saved note</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Quiz key accuracy</div><div class="stat-value text-2xl">≥95%</div>
+        <div class="stat-desc">Sampled audit, cited</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Ingest PDF</div><div class="stat-value text-2xl">&lt;60s</div>
+        <div class="stat-desc">100-page PDF → wiki + RAG</div></div>
+      <div class="stat bg-base-100 rounded-box border border-base-content/10 stat-sm">
+        <div class="stat-title">Strategy</div><div class="stat-value text-2xl">Cloud-first</div>
+        <div class="stat-desc">Local Ollama fallback</div></div>
+    </div>
+  </section>
+
+  <!-- MODEL STACK -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🧠 Model Routing (cloud-first · strength-routed · local fallback)</h2>
+    <div class="overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table table-zebra table-sm">
+        <thead><tr><th>Task</th><th>Primary (cloud)</th><th>Why</th><th>Fallback (local)</th></tr></thead>
+        <tbody>
+          <tr><td>Investigation / synthesis / quiz / eval</td><td class="font-mono text-sm">deepseek-v4-pro</td><td>Top reasoning</td><td class="font-mono text-xs">qwen2.5-coder:7b</td></tr>
+          <tr><td>Structured notes / Mermaid / JSON / code</td><td class="font-mono text-sm">zai/glm-5.1</td><td>Structured output + code</td><td class="font-mono text-xs">gemma4:e4b</td></tr>
+          <tr><td>Fast ops (routing, classify, stream)</td><td class="font-mono text-sm">deepseek-v4-flash · glm-5-turbo</td><td>Speed + cost</td><td class="font-mono text-xs">qwen2.5-coder:7b</td></tr>
+          <tr><td>Long-context doc ingest (100+ pg)</td><td class="font-mono text-sm">deepseek-v4-pro <span class="badge badge-ghost badge-xs">MiniMax deferred</span></td><td>Long context</td><td>—</td></tr>
+          <tr><td>Embeddings (RAG)</td><td class="font-mono text-sm">all-MiniLM-L6-v2</td><td>Cheap, local</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="alert alert-soft alert-info mt-3 text-sm"><span><b>MiniMax — deferred (owner-owned).</b> Will be configured later by the owner (direct provider or via OpenRouter) for long-context (1M) + multimodal ingestion. Non-blocking — <code>deepseek-v4-pro</code> handles long-context until then.</span></div>
+    <div class="alert alert-soft alert-info mt-3 text-sm"><span><b>Local resilience:</b> configured fallbacks are 7B-class. Optionally pull <code>qwen2.5:14b-instruct</code> on the 16 GB GPU for stronger offline fallback.</span></div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🏗️ Architecture & Data Flow</h2>
+    <div class="rounded-box border border-base-content/10 bg-base-100 p-4">
+      <div class="mermaid">
+flowchart LR
+  MD[("📝 Obsidian Vault")] -->|watchdog| WT[File Watcher]
+  INBOX[("📥 Inbox · PDF/MD/HTML")] -->|ingest_document| PARSE["Normalizer · PDF/HTML→MD"]
+  WT --> CHUNK[Chunker]
+  PARSE --> CHUNK
+  CHUNK --> EMB[MiniLM embed] --> VDB[("ChromaDB")]
+  CAND[("🧑 Candidate")] -->|trigger topic| OC
+  subgraph AG["Investigation Agent"]
+    OC["OpenCode · ReAct orchestrator"]
+    HM["Hermes · persistent memory"]
+    OC <--> HM
+  end
+  OC -->|RAG first| VDB
+  OC -->|gap fill| WS["web_search / webfetch"]
+  OC -->|write note| MD
+  OC --> MMD["Mermaid diagram"]
+  OC --> QZ["Quiz JSON · validated"]
+  OC --> LAV["Lavish HTML artifact"]
+  LAV -->|open| BR["🌐 Browser"]
+  BR -.->|highlight + poll| OC
+  OC -.->|update + live-reload| LAV
+      </div>
+    </div>
+    <p class="text-sm text-base-content/60 mt-2">Two ingest paths → ChromaDB: <b>(a)</b> live Obsidian edits via watcher, <b>(b)</b> raw docs in <code>inbox/</code> normalized to Markdown. Trigger → RAG-check → (gaps) web → synthesize → note + Mermaid + quiz → Lavish → annotate → refine → live reload.</p>
+  </section>
+
+  <!-- AGENT ROLES -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🤖 Agent Roles</h2>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="card card-border bg-base-100"><div class="card-body">
+        <h3 class="card-title">OpenCode — Orchestrator / Investigator</h3>
+        <p class="text-sm text-base-content/70">Owns the ReAct loop: observe → RAG-check → decide search → synthesize → write note → present in Lavish. Native web/bash/fs access; lowest setup cost.</p>
+        <div class="card-actions"><span class="badge badge-primary badge-sm">Primary investigator</span><span class="badge badge-ghost badge-sm">Native tools</span></div>
+      </div></div>
+      <div class="card card-border bg-base-100"><div class="card-body">
+        <h3 class="card-title">Hermes — Persistent Learning Memory</h3>
+        <p class="text-sm text-base-content/70">Long-term memory across sessions; accumulates NVIDIA-domain context (remembers "Guardrails" when later asked "Guardrails + NIM"). The self-improving recall layer.</p>
+        <div class="card-actions"><span class="badge badge-secondary badge-sm">Self-improving</span><span class="badge badge-ghost badge-sm">v1.1</span></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- USER STORIES -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🧩 User Stories</h2>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="card card-border bg-base-100 card-sm"><div class="card-body">
+        <h3 class="card-title text-base">US-1 · Trigger an investigation</h3>
+        <p class="text-sm text-base-content/70 italic">"Investigate reasoning and action frameworks" → full sourced study unit.</p>
+        <ul class="text-sm list-disc pl-5 mt-2 space-y-1 text-base-content/80">
+          <li>RAG-check before any web call</li><li>≥3 distinct web sources for gaps</li>
+          <li>Note: Concepts · NVIDIA context · Mermaid · Terms · Refs</li>
+          <li>Saved &lt; 5 min; ≥5 quiz items attached</li>
+        </ul></div></div>
+      <div class="card card-border bg-base-100 card-sm"><div class="card-body">
+        <h3 class="card-title text-base">US-2 · Review in Lavish</h3>
+        <p class="text-sm text-base-content/70 italic">Highlight a section → ask follow-up → page updates live.</p>
+        <ul class="text-sm list-disc pl-5 mt-2 space-y-1 text-base-content/80">
+          <li>Self-contained index.html + Mermaid via CDN</li>
+          <li>Highlight + prompt via <code>lavish-axi poll</code></li>
+          <li>Live-reload without losing scroll place</li>
+          <li>Every claim cite-able to URL or note</li>
+        </ul></div></div>
+      <div class="card card-border bg-base-100 card-sm"><div class="card-body">
+        <h3 class="card-title text-base">US-3 · Take a quiz</h3>
+        <p class="text-sm text-base-content/70 italic">Exam-style MCQ with immediate feedback.</p>
+        <ul class="text-sm list-disc pl-5 mt-2 space-y-1 text-base-content/80">
+          <li>4 options, one unambiguous answer</li>
+          <li>Rationale + citation per item</li>
+          <li>In-browser grading + running score</li>
+          <li>Answer-key audit ≥ 95% correct</li>
+        </ul></div></div>
+      <div class="card card-border bg-base-100 card-sm"><div class="card-body">
+        <h3 class="card-title text-base">US-4 · Query my knowledge base</h3>
+        <p class="text-sm text-base-content/70 italic">"What do I know about Guardrails?" → grounded from my notes.</p>
+        <ul class="text-sm list-disc pl-5 mt-2 space-y-1 text-base-content/80">
+          <li>Top-k chunks from ChromaDB</li>
+          <li>Source note + heading links</li>
+          <li>Precision@5 ≥ 85% on held-out set</li>
+        </ul></div></div>
+      <div class="card card-border bg-base-100 card-sm"><div class="card-body">
+        <h3 class="card-title text-base">US-6 · Ingest raw documents <span class="badge badge-success badge-sm">new</span></h3>
+        <p class="text-sm text-base-content/70 italic">Drop a PDF / Markdown / HTML → parsed, chunked, added to wiki + RAG.</p>
+        <ul class="text-sm list-disc pl-5 mt-2 space-y-1 text-base-content/80">
+          <li>Watched <code>inbox/</code> or <code>ingest_document(path)</code></li>
+          <li>PDF → clean Markdown (tables preserved); OCR fallback for scans</li>
+          <li>Provenance: file, page nos, timestamp in metadata</li>
+          <li>Idempotent (content-hash dedup); 100-page PDF &lt; 60s</li>
+        </ul></div></div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">🚀 Phased Rollout <span class="badge badge-primary badge-sm">Exam: Nov 4, 2026</span></h2>
+    <ul class="steps steps-vertical lg:steps-horizontal w-full">
+      <li class="step step-primary">MVP<div class="text-xs text-base-content/60">~Jul 6 · Vault + RAG + doc ingest + investigator + Lavish guide</div></li>
+      <li class="step">v1.1<div class="text-xs text-base-content/60">~Aug 17 · Hermes memory + dashboard + quiz eval</div></li>
+      <li class="step">v2.0<div class="text-xs text-base-content/60">~Sep 21 · Interactive quizzes + spaced repetition + multi-agent</div></li>
+      <li class="step">🎓 Exam<div class="text-xs text-base-content/60">Nov 4 · study window Sep–Oct</div></li>
+    </ul>
+  </section>
+
+  <!-- RISKS -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">⚠️ Technical Risks</h2>
+    <div class="overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table table-zebra table-sm">
+        <thead><tr><th>Risk</th><th>L</th><th>I</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>Cloud LLM hallucinates on niche NVIDIA docs</td><td>Med</td><td>High</td><td>Citation grounding + groundedness eval; route hard topics to deepseek-v4-pro</td></tr>
+          <tr><td>Quiz answer keys subtly wrong</td><td>Med</td><td>High</td><td>Schema validation + sampled audit ≥95%; rationale + source</td></tr>
+          <tr><td>Local fallback quality (7B-class when offline)</td><td>Low</td><td>Med</td><td>Cloud is primary; optionally pull qwen2.5:14b on 16 GB GPU</td></tr>
+          <tr><td>Mermaid syntax breaks render</td><td>Med</td><td>Low</td><td>Lint before emit; fallback render</td></tr>
+          <tr><td>Web-search rate limits / cost</td><td>Med</td><td>Med</td><td>DuckDuckGo (free); cache results in vault</td></tr>
+          <tr><td>PDF parsing quality (tables/figures/scans)</td><td>Med</td><td>Med</td><td>Robust local parser (pymupdf/MarkItDown); OCR fallback; flag low-confidence pages</td></tr>
+          <tr><td>Objectives coverage</td><td>Low</td><td>Low</td><td>✅ All 10 domains captured. Weights sum 92% (source) — verify before exam</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- OPEN QUESTIONS / INPUT -->
+  <section class="mt-10 annotate-hint rounded-box p-5 border border-primary/30 bg-primary/5">
+    <h2 class="text-xl font-semibold mb-1 flex items-center gap-2">✍️ Open Questions — highlight & respond in Lavish</h2>
+    <p class="text-sm text-base-content/60 mb-4">3 of 4 resolved. Optional: add MiniMax for long-context ingestion. Highlight any item to refine.</p>
+    <div class="space-y-3">
+      <div class="collapse collapse-arrow bg-base-100 border border-base-content/10 opacity-70">
+        <input type="radio" name="oq">
+        <div class="collapse-title font-medium">1. ~~Exam objectives~~ <span class="badge badge-success badge-sm ml-1">resolved: all 10 domains</span></div>
+        <div class="collapse-content text-sm text-base-content/70"><p>All 10 domains captured in EXAM_OBJECTIVES.md. Note: official weights sum to 92% — flagged for verification.</p></div>
+      </div>
+      <div class="collapse collapse-arrow bg-base-100 border border-base-content/10 opacity-70">
+        <input type="radio" name="oq">
+        <div class="collapse-title font-medium">2. ~~Exam target date~~ <span class="badge badge-success badge-sm ml-1">resolved: Nov 4, 2026</span></div>
+        <div class="collapse-content text-sm text-base-content/70"><p>~4.5 months runway. Roadmap: MVP ~Jul 6, v1.1 ~Aug 17, v2.0 ~Sep 21, study Sep–Oct, exam Nov 4.</p></div>
+      </div>
+      <div class="collapse collapse-arrow bg-base-100 border border-base-content/10 opacity-70">
+        <input type="radio" name="oq">
+        <div class="collapse-title font-medium">3. ~~Web-search provider~~ <span class="badge badge-success badge-sm ml-1">resolved: DuckDuckGo</span></div>
+        <div class="collapse-content text-sm text-base-content/70"><p>Free, no API key. Results will be cached in the vault.</p></div>
+      </div>
+      <div class="collapse collapse-arrow bg-base-100 border border-base-content/10 opacity-70">
+        <input type="radio" name="oq" checked>
+        <div class="collapse-title font-medium">4. ~~Cloud LLM fallback~~ <span class="badge badge-success badge-sm ml-1">resolved: cloud-first</span></div>
+        <div class="collapse-content text-sm text-base-content/70"><p>Cloud-first, strength-routed: deepseek-v4-pro (reasoning/quiz), glm-5.1 (notes/Mermaid/code), deepseek-v4-flash/glm-5-turbo (fast ops); local Ollama as fallback. MiniMax deferred — owner will configure later (non-blocking).</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOMAIN MATRIX -->
+  <section class="mt-10">
+    <h2 class="text-xl font-semibold mb-3 flex items-center gap-2">📊 Exam Domain Coverage <span class="badge badge-success badge-sm">Official · Complete</span></h2>
+    <p class="text-sm text-base-content/60 mb-3">All 10 domains from the official study guide. Full tracker: <code>EXAM_OBJECTIVES.md</code> · raw source: <code>NVIDIA-NCP-AAI-Study/inbox/nvt-study-guide.md</code>. <span class="badge badge-warning badge-sm">weights sum to 92% (source) — verify</span></p>
+    <div class="overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table table-zebra table-sm">
+        <thead><tr><th>#</th><th>Domain</th><th>Wt</th><th>Sub-objs</th><th>Note</th><th>≥3 Quiz</th><th>Last</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Agent Architecture and Design</td><td><b>15%</b></td><td>1.1–1.8</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>2</td><td>Agent Development</td><td><b>15%</b></td><td>2.1–2.6</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>3</td><td>Evaluation and Tuning</td><td><b>13%</b></td><td>3.1–3.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>4</td><td>Deployment and Scaling</td><td>5%</td><td>4.1–4.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>5</td><td>Cognition, Planning, and Memory</td><td>10%</td><td>5.1–5.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>6</td><td>Knowledge Integration & Data Handling</td><td>10%</td><td>6.1–6.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>7</td><td>NVIDIA Platform Implementation</td><td>7%</td><td>7.1–7.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>8</td><td>Run, Monitor, and Maintain</td><td>7%</td><td>8.1–8.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>9</td><td>Safety, Ethics, and Compliance</td><td>5%</td><td>9.1–9.5</td><td>☐</td><td>☐</td><td>—</td></tr>
+          <tr><td>10</td><td>Human-AI Interaction and Oversight</td><td>5%</td><td>10.1–10.4</td><td>☐</td><td>☐</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="alert alert-soft alert-info mt-3 text-sm">
+      <span><b>Cross-domain NVIDIA stack to emphasize:</b> NeMo / Agentic NeMo / NeMo Agent Toolkit / NeMo Guardrails · NIM (microservices + Agent Blueprints) · Triton · TensorRT-LLM · Agent Intelligence Toolkit (AIQ) · Data Flywheel · Nsight Systems · DGX Cloud · CUDA/GPU ops.</span>
+    </div>
+  </section>
+
+  <footer class="mt-12 pt-6 border-t border-base-content/10 text-center text-sm text-base-content/50">
+    <p>PRD v1.0 — discovery complete, ready to build · source of truth: <code>PRD.md</code> · Design system: Lavish-recommended Tailwind v4 + DaisyUI v5 (luxury).</p>
+    <p class="mt-1">Highlight any section above to annotate → your feedback flows back to the agent.</p>
+  </footer>
+
+</main>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+</body>
+</html>
