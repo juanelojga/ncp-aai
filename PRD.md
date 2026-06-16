@@ -39,7 +39,7 @@ A personal agentic study engine where the candidate triggers a topic (e.g., *"Im
 - **AC-1.1** Agent runs `query_knowledge_base(topic)` before any web call; reuses/synthesizes existing notes when coverage ≥ threshold.
 - **AC-1.2** If gaps exist, agent performs targeted web search (≥ 3 distinct sources) and fetches content.
 - **AC-1.3** Output is one Obsidian note with sections: **Core Concepts**, **NVIDIA Context**, **Mermaid diagram**, **Key terms**, **References** (with URLs).
-- **AC-1.4** Note saved to vault within **< 5 min** of trigger.
+- **AC-1.4** Note saved to vault via REST API within **< 5 min** of trigger.
 - **AC-1.5** A structured quiz (≥ 5 items) is attached or linked.
 
 **US-2 — Review interactively in Lavish**
@@ -109,7 +109,7 @@ Cloud models are primary (best quality, no VRAM limits); local models serve as o
 - `ingest_document(path)` — parse PDF/MD/HTML/TXT → Markdown → chunk → embed → ChromaDB **and** file a readable copy in the vault; idempotent via content-hash dedup.
 - `web_search(query)` — Tavily **or** DuckDuckGo (provider + key **TBD**).
 - `webfetch(url)` — fetch + markdown-convert.
-- `write_note(path, content)` / `update_note` — filesystem to Obsidian vault.
+- `vault_write(path, content)` / `vault_read(path)` / `vault_search(query)` — Obsidian Local REST API (`localhost:27124`).
 - `render_mermaid(spec)` — validate syntax before emit (lint).
 - `lavish_present(html_path)` / `lavish_poll` / `lavish_reply` — Lavish loop via `npx -y lavish-axi`.
 - `generate_quiz(topic, n, schema)` — returns JSON validated against a quiz schema.
@@ -135,13 +135,14 @@ Cloud models are primary (best quality, no VRAM limits); local models serve as o
 flowchart LR
     subgraph Capture["Obsidian Vault (NVIDIA-NCP-AAI-Study)"]
         MD[("Markdown notes")]
+        OAPI[Obsidian Local REST API<br/>localhost:27124]
+        MD <--> OAPI
     end
-    MD -->|watchdog watch| WT[File Watcher]
     INBOX[("Inbox<br/>PDF/MD/HTML/TXT")] -->|ingest_document| PARSE[Normalizer<br/>PDF/HTML -> Markdown]
-    WT --> CHUNK[Chunker<br/>header + sliding window]
-    PARSE --> CHUNK
+    PARSE --> CHUNK[Chunker<br/>header + sliding window]
     CHUNK --> EMB[Embedder<br/>all-MiniLM-L6-v2]
     EMB --> VDB[("ChromaDB<br/>persistent")]
+    OAPI -.->|poll on change<br/>or webhook| CHUNK
 
     CAND[("Candidate")] -->|trigger topic| OC
     subgraph Agent["Investigation Agent"]
@@ -151,7 +152,7 @@ flowchart LR
     end
     OC -->|RAG first| VDB
     OC -->|gap fill| WS[web_search / webfetch]
-    OC -->|write note| MD
+    OC -->|vault_write via REST API| OAPI
     OC -->|generate| MMD[Mermaid diagram]
     OC -->|study guide / quiz| LAV
     LAV[Lavish HTML artifact] -->|open in browser| BR[Browser]
@@ -160,15 +161,15 @@ flowchart LR
     OC --> QZ[Quiz JSON<br/>schema-validated]
 ```
 
-**Data flow:** Two ingest paths feed the vector store — **(a)** live Obsidian edits via the file watcher, and **(b)** raw documents dropped in `inbox/` (PDF/MD/HTML/TXT) normalized to Markdown via `ingest_document`. Both → chunk → embed → ChromaDB. Trigger → agent RAG-checks ChromaDB → (gaps) web search/fetch → synthesizes → writes Obsidian note + Mermaid + quiz → presents Lavish artifact → candidate annotates → agent refines → live reload.
+**Data flow:** Two ingest paths feed the vector store — **(a)** live Obsidian edits via the Local REST API (polled or webhook-triggered), and **(b)** raw documents dropped in `inbox/` (PDF/MD/HTML/TXT) normalized to Markdown via `ingest_document`. Both → chunk → embed → ChromaDB. Trigger → agent RAG-checks ChromaDB → (gaps) web search/fetch → synthesizes → writes Obsidian note via REST API + Mermaid + quiz → presents Lavish artifact → candidate annotates → agent refines → live reload.
 
 ### Integration Points
 | Point | Detail |
 |-------|--------|
 | LLM (cloud, primary) | DeepSeek API (`api.deepseek.com`: v4-pro, v4-flash), ZAI (GLM-5/5.1/5-turbo), OpenRouter (qwen3.6-plus) — via opencode config. |
 | LLM (local, fallback) | Ollama `http://localhost:11434` (qwen2.5-coder:7b-32k, gemma4:e4b-64k). |
-| Obsidian vault | Local dir `NVIDIA-NCP-AAI-Study/`; watched with `watchdog`. |
-| Inbox (raw docs) | `NVIDIA-NCP-AAI-Study/inbox/` for PDF/MD/HTML/TXT; `ingest_document(path)` normalizes → Markdown → vault + ChromaDB. PDF parsing via `pymupdf` (MarkItDown alt); OCR via `tesseract` (optional, scanned PDFs). |
+| Obsidian vault | Local REST API plugin (`http://localhost:27124`); read/write/search via HTTP. Vault dir `NVIDIA-NCP-AAI-Study/` is managed by Obsidian — no direct filesystem writes. |
+| Inbox (raw docs) | `NVIDIA-NCP-AAI-Study/inbox/` for PDF/MD/HTML/TXT (filesystem); `ingest_document(path)` normalizes → Markdown → vault via REST API + ChromaDB. PDF parsing via `pymupdf` (MarkItDown alt); OCR via `tesseract` (optional, scanned PDFs). |
 | Vector store | ChromaDB persistent client at `./chroma_db`. |
 | Web search | **DuckDuckGo** (free, no API key) — resolved. Results cached in vault. |
 | Lavish | `npx -y lavish-axi` (no global install). |
@@ -184,7 +185,7 @@ flowchart LR
 ## 5. Risks & Roadmap
 
 ### Phased Rollout  *(exam: Nov 4, 2026 · ~4.5 mo runway)*
-- **MVP** *(target: ~Jul 6)* — Obsidian vault + `rag_engine.py` (watch → chunk → embed → ChromaDB → `query_knowledge_base`) + `ingest_document` (PDF/MD) + OpenCode investigator (RAG + DuckDuckGo + note + Mermaid) + basic Lavish study guide. Cloud models: deepseek-v4-pro (investigate/quiz), glm-5.1 (notes/Mermaid).
+- **MVP** *(target: ~Jul 6)* — Obsidian vault + `rag_engine.py` (poll REST API → chunk → embed → ChromaDB → `query_knowledge_base`) + `ingest_document` (PDF/MD → REST API write) + OpenCode investigator (RAG + DuckDuckGo + note via REST API + Mermaid) + basic Lavish study guide. Cloud models: deepseek-v4-pro (investigate/quiz), glm-5.1 (notes/Mermaid).
 - **v1.1** *(target: ~Aug 17)* — Hermes persistent-memory layer; coverage/readiness dashboard; quiz eval harness + anti-hallucination checks.
 - **v2.0** *(target: ~Sep 21; study Sep–Oct)* — Interactive in-Lavish quizzes with grading; spaced-repetition scheduling; multi-agent (Planner/Executor) orchestration. Exam **Nov 4**.
 
