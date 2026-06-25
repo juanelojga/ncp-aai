@@ -7,14 +7,29 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi import Path as ApiPath
 from pydantic import BaseModel, Field
+from sqlalchemy import desc, func, select, text
 
 from ncp_aai import __version__
 from ncp_aai.agents.codex_provider import CodexOperatorProvider, CodexOutputInput
 from ncp_aai.agents.local_stub import build_stub_codex_output
 from ncp_aai.config import Settings, get_settings
-from ncp_aai.db import init_db, session
+from ncp_aai.db import init_db, mapping_to_dict, model_to_dict, session
 from ncp_aai.ingestion.service import ingest_inbox_file, ingest_local_file
 from ncp_aai.jobs.queue import InvestigationWorker
+from ncp_aai.models import (
+    AppSetting,
+    Domain,
+    ExerciseRecommendation,
+    FeedbackItem,
+    InvestigationJob,
+    Note,
+    Objective,
+    QuizAttempt,
+    QuizQuestion,
+    SourceRecord,
+    Topic,
+    TopicSource,
+)
 from ncp_aai.objectives import import_objectives
 from ncp_aai.rag.store import RagStore
 from ncp_aai.synthesis.citations import CitationValidationError
@@ -95,8 +110,8 @@ class SliceRunRequest(BaseModel):
 @app.get("/health")
 def health(settings: SettingsDep) -> HealthResponse:
     try:
-        with session(settings) as conn:
-            conn.execute("SELECT 1").fetchone()
+        with session(settings) as db:
+            db.execute(text("SELECT 1")).fetchone()
         database_status = "ok"
     except Exception as exc:
         database_status = f"error: {exc}"
@@ -128,52 +143,55 @@ def import_objectives_endpoint(settings: SettingsDep) -> dict[str, Any]:
 
 @app.get("/api/objectives")
 def list_objectives(settings: SettingsDep) -> dict[str, Any]:
-    with session(settings) as conn:
-        domain_rows = conn.execute("SELECT * FROM domains ORDER BY number").fetchall()
-        objective_rows = conn.execute(
-            """
-            SELECT
-                o.*,
-                t.id AS topic_id,
-                COUNT(DISTINCT ts.source_id) AS source_count,
-                COUNT(DISTINCT n.id) AS note_count,
-                COUNT(DISTINCT qq.id) AS quiz_count,
-                (
-                    SELECT qa.score
-                    FROM quiz_attempts qa
-                    WHERE qa.objective_id = o.id
-                    ORDER BY qa.created_at DESC
-                    LIMIT 1
-                ) AS latest_quiz_score
-            FROM objectives o
-            LEFT JOIN topics t ON t.objective_id = o.id
-            LEFT JOIN topic_sources ts ON ts.topic_id = t.id
-            LEFT JOIN notes n ON n.objective_id = o.id
-            LEFT JOIN quiz_questions qq ON qq.objective_id = o.id
-            GROUP BY o.id, t.id
-            ORDER BY CAST(substr(o.number, 1, instr(o.number, '.') - 1) AS INTEGER),
-                     CAST(substr(o.number, instr(o.number, '.') + 1) AS INTEGER)
-            """
-        ).fetchall()
-        settings_rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    with session(settings) as db:
+        domain_rows = db.scalars(select(Domain).order_by(Domain.number)).all()
+        latest_quiz_score = (
+            select(QuizAttempt.score)
+            .where(QuizAttempt.objective_id == Objective.id)
+            .order_by(desc(QuizAttempt.created_at))
+            .limit(1)
+            .scalar_subquery()
+        )
+        objective_rows = db.execute(
+            select(
+                Objective,
+                Topic.id.label("topic_id"),
+                func.count(func.distinct(TopicSource.source_id)).label("source_count"),
+                func.count(func.distinct(Note.id)).label("note_count"),
+                func.count(func.distinct(QuizQuestion.id)).label("quiz_count"),
+                latest_quiz_score.label("latest_quiz_score"),
+            )
+            .outerjoin(Topic, Topic.objective_id == Objective.id)
+            .outerjoin(TopicSource, TopicSource.topic_id == Topic.id)
+            .outerjoin(Note, Note.objective_id == Objective.id)
+            .outerjoin(QuizQuestion, QuizQuestion.objective_id == Objective.id)
+            .group_by(Objective.id, Topic.id)
+        ).all()
+        settings_rows = db.scalars(select(AppSetting)).all()
 
     objectives_by_domain: dict[str, list[dict[str, Any]]] = {}
     for row in objective_rows:
-        objective = dict(row)
-        objective["source_count"] = int(objective["source_count"] or 0)
-        objective["note_count"] = int(objective["note_count"] or 0)
-        objective["quiz_count"] = int(objective["quiz_count"] or 0)
+        objective_model = row[0]
+        objective = model_to_dict(objective_model)
+        objective["topic_id"] = row.topic_id
+        objective["source_count"] = int(row.source_count or 0)
+        objective["note_count"] = int(row.note_count or 0)
+        objective["quiz_count"] = int(row.quiz_count or 0)
+        objective["latest_quiz_score"] = row.latest_quiz_score
         objectives_by_domain.setdefault(objective["domain_id"], []).append(objective)
 
     domains = []
     for row in domain_rows:
-        domain = dict(row)
+        domain = model_to_dict(row)
         domain["objectives"] = objectives_by_domain.get(domain["id"], [])
+        domain["objectives"].sort(
+            key=lambda item: tuple(int(part) for part in item["number"].split("."))
+        )
         domains.append(domain)
 
     return {
         "domains": domains,
-        "metadata": {row["key"]: json.loads(row["value"]) for row in settings_rows},
+        "metadata": {row.key: json.loads(row.value) for row in settings_rows},
     }
 
 
@@ -221,11 +239,11 @@ def start_investigation(
     request: InvestigationRequest,
     settings: SettingsDep,
 ) -> dict[str, str]:
-    with session(settings) as conn:
-        topic = conn.execute("SELECT title FROM topics WHERE id = ?", (topic_id,)).fetchone()
+    with session(settings) as db:
+        topic = db.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Unknown topic_id: {topic_id}")
-    query = request.query or topic["title"]
+    query = request.query or topic.title
     if worker is None:
         raise HTTPException(status_code=503, detail="Investigation worker is not running")
     job_id = worker.enqueue(topic_id=topic_id, query=query, codex_output=request.codex_output)
@@ -234,11 +252,11 @@ def start_investigation(
 
 @app.get("/api/investigations/{job_id}")
 def get_investigation(job_id: Annotated[str, ApiPath()], settings: SettingsDep) -> dict[str, Any]:
-    with session(settings) as conn:
-        row = conn.execute("SELECT * FROM investigation_jobs WHERE id = ?", (job_id,)).fetchone()
+    with session(settings) as db:
+        row = db.get(InvestigationJob, job_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown job_id: {job_id}")
-    job = dict(row)
+    job = model_to_dict(row)
     job["logs"] = json.loads(job.pop("logs_json"))
     job["gaps"] = json.loads(job.pop("gaps_json"))
     job["artifact_ids"] = json.loads(job.pop("artifact_ids_json"))
@@ -247,59 +265,61 @@ def get_investigation(job_id: Annotated[str, ApiPath()], settings: SettingsDep) 
 
 @app.get("/api/topics/{topic_id}")
 def get_topic(topic_id: Annotated[str, ApiPath()], settings: SettingsDep) -> dict[str, Any]:
-    with session(settings) as conn:
-        topic = conn.execute(
-            """
-            SELECT
-                t.*,
-                o.number AS objective_number,
-                o.title AS objective_title,
-                d.name AS domain_name
-            FROM topics t
-            JOIN objectives o ON o.id = t.objective_id
-            JOIN domains d ON d.id = o.domain_id
-            WHERE t.id = ?
-            """,
-            (topic_id,),
-        ).fetchone()
+    with session(settings) as db:
+        topic = db.execute(
+            select(
+                Topic.id,
+                Topic.objective_id,
+                Topic.title,
+                Topic.status,
+                Topic.created_at,
+                Topic.updated_at,
+                Objective.number.label("objective_number"),
+                Objective.title.label("objective_title"),
+                Domain.name.label("domain_name"),
+            )
+            .join(Objective, Objective.id == Topic.objective_id)
+            .join(Domain, Domain.id == Objective.domain_id)
+            .where(Topic.id == topic_id)
+        ).first()
         if topic is None:
             raise HTTPException(status_code=404, detail=f"Unknown topic_id: {topic_id}")
-        notes = conn.execute(
-            "SELECT * FROM notes WHERE topic_id = ? ORDER BY created_at DESC",
-            (topic_id,),
-        ).fetchall()
-        sources = conn.execute(
-            """
-            SELECT sr.*
-            FROM source_records sr
-            JOIN topic_sources ts ON ts.source_id = sr.id
-            WHERE ts.topic_id = ?
-            ORDER BY sr.created_at DESC
-            """,
-            (topic_id,),
-        ).fetchall()
-        quizzes = conn.execute(
-            "SELECT * FROM quiz_questions WHERE topic_id = ? ORDER BY created_at DESC",
-            (topic_id,),
-        ).fetchall()
-        exercises = conn.execute(
-            "SELECT * FROM exercise_recommendations WHERE topic_id = ? ORDER BY created_at DESC",
-            (topic_id,),
-        ).fetchall()
-        feedback = conn.execute(
-            "SELECT * FROM feedback_items WHERE topic_id = ? ORDER BY created_at DESC", (topic_id,)
-        ).fetchall()
-        jobs = conn.execute(
-            "SELECT * FROM investigation_jobs WHERE topic_id = ? ORDER BY created_at DESC",
-            (topic_id,),
-        ).fetchall()
+        notes = db.scalars(
+            select(Note).where(Note.topic_id == topic_id).order_by(desc(Note.created_at))
+        ).all()
+        sources = db.scalars(
+            select(SourceRecord)
+            .join(TopicSource, TopicSource.source_id == SourceRecord.id)
+            .where(TopicSource.topic_id == topic_id)
+            .order_by(desc(SourceRecord.created_at))
+        ).all()
+        quizzes = db.scalars(
+            select(QuizQuestion)
+            .where(QuizQuestion.topic_id == topic_id)
+            .order_by(desc(QuizQuestion.created_at))
+        ).all()
+        exercises = db.scalars(
+            select(ExerciseRecommendation)
+            .where(ExerciseRecommendation.topic_id == topic_id)
+            .order_by(desc(ExerciseRecommendation.created_at))
+        ).all()
+        feedback = db.scalars(
+            select(FeedbackItem)
+            .where(FeedbackItem.topic_id == topic_id)
+            .order_by(desc(FeedbackItem.created_at))
+        ).all()
+        jobs = db.scalars(
+            select(InvestigationJob)
+            .where(InvestigationJob.topic_id == topic_id)
+            .order_by(desc(InvestigationJob.created_at))
+        ).all()
     return {
-        "topic": dict(topic),
-        "notes": [dict(row) for row in notes],
-        "sources": [dict(row) for row in sources],
+        "topic": mapping_to_dict(topic),
+        "notes": [model_to_dict(row) for row in notes],
+        "sources": [model_to_dict(row) for row in sources],
         "quiz_questions": [_decode_quiz(row) for row in quizzes],
-        "exercises": [dict(row) for row in exercises],
-        "feedback": [dict(row) for row in feedback],
+        "exercises": [model_to_dict(row) for row in exercises],
+        "feedback": [model_to_dict(row) for row in feedback],
         "jobs": [_decode_job(row) for row in jobs],
     }
 
@@ -327,23 +347,18 @@ def create_feedback(
         if worker is None:
             raise HTTPException(status_code=503, detail="Investigation worker is not running")
         followup_job_id = worker.enqueue(topic_id=topic_id, query=request.body)
-    with session(settings) as conn:
-        row = conn.execute("SELECT id FROM topics WHERE id = ?", (topic_id,)).fetchone()
-        if row is None:
+    with session(settings) as db:
+        if db.get(Topic, topic_id) is None:
             raise HTTPException(status_code=404, detail=f"Unknown topic_id: {topic_id}")
         feedback_id = f"feedback-{uuid.uuid4().hex}"
-        conn.execute(
-            """
-            INSERT INTO feedback_items (id, topic_id, body, create_followup_job, followup_job_id)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                feedback_id,
-                topic_id,
-                request.body,
-                int(request.create_followup_job),
-                followup_job_id,
-            ),
+        db.add(
+            FeedbackItem(
+                id=feedback_id,
+                topic_id=topic_id,
+                body=request.body,
+                create_followup_job=int(request.create_followup_job),
+                followup_job_id=followup_job_id,
+            )
         )
     return {"feedback_id": feedback_id, "followup_job_id": followup_job_id}
 
@@ -401,14 +416,14 @@ def codex_provider_info() -> dict[str, Any]:
 
 
 def _decode_quiz(row: Any) -> dict[str, Any]:
-    data = dict(row)
+    data = model_to_dict(row) if hasattr(row, "__table__") else mapping_to_dict(row)
     data["options"] = json.loads(data.pop("options_json"))
     data["metadata"] = json.loads(data.pop("metadata_json"))
     return data
 
 
 def _decode_job(row: Any) -> dict[str, Any]:
-    data = dict(row)
+    data = model_to_dict(row) if hasattr(row, "__table__") else mapping_to_dict(row)
     data["logs"] = json.loads(data.pop("logs_json"))
     data["gaps"] = json.loads(data.pop("gaps_json"))
     data["artifact_ids"] = json.loads(data.pop("artifact_ids_json"))

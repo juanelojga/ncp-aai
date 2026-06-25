@@ -1,5 +1,8 @@
+from sqlalchemy import func, select
+
 from ncp_aai.db import session
 from ncp_aai.ingestion.service import ingest_inbox_file
+from ncp_aai.models import SourceRecord
 from ncp_aai.objectives import import_objectives
 from ncp_aai.rag.store import RagStore
 
@@ -36,8 +39,6 @@ def test_markdown_ingest_deduplicates_and_queries(app_settings):
     assert results[0]["chunk_id"].startswith("chunk-")
     assert "Vector databases" in results[0]["text"]
 
-    with session(app_settings) as conn:
-        source_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM source_records"
-        ).fetchone()["count"]
+    with session(app_settings) as db:
+        source_count = db.scalar(select(func.count()).select_from(SourceRecord))
     assert source_count == 1

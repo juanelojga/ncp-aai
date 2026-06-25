@@ -2,11 +2,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import session
 from ncp_aai.ingestion.chunking import chunk_segments
 from ncp_aai.ingestion.normalize import hash_bytes, segment_text
 from ncp_aai.ingestion.readers import SUPPORTED_EXTENSIONS, read_document
+from ncp_aai.models import SourceChunk, SourceRecord, Topic, TopicSource, VectorEntry
 from ncp_aai.rag.store import RagStore
 
 
@@ -61,81 +65,70 @@ def ingest_local_file(
     title = path.stem.replace("-", " ").replace("_", " ").strip() or path.name
     topic_ids = _resolve_topic_ids(objective_ids or [], topic_ids or [], settings)
 
-    with session(settings) as conn:
-        existing = conn.execute(
-            "SELECT id FROM source_records WHERE content_hash = ?", (content_hash,)
-        ).fetchone()
+    with session(settings) as db:
+        existing = db.scalar(
+            select(SourceRecord.id).where(SourceRecord.content_hash == content_hash)
+        )
         if existing:
-            source_id = existing["id"]
+            source_id = existing
             for topic_id in topic_ids:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO topic_sources (topic_id, source_id)
-                    VALUES (?, ?)
-                    """,
-                    (topic_id, source_id),
+                db.execute(
+                    sqlite_insert(TopicSource)
+                    .values(topic_id=topic_id, source_id=source_id)
+                    .on_conflict_do_nothing()
                 )
-            chunk_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM source_chunks WHERE source_id = ?", (source_id,)
-            ).fetchone()["count"]
-            vector_count = conn.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM vector_entries ve
-                JOIN source_chunks sc ON sc.id = ve.source_chunk_id
-                WHERE sc.source_id = ?
-                """,
-                (source_id,),
-            ).fetchone()["count"]
+            chunk_count = db.scalar(
+                select(func.count())
+                .select_from(SourceChunk)
+                .where(SourceChunk.source_id == source_id)
+            )
+            vector_count = db.scalar(
+                select(func.count())
+                .select_from(VectorEntry)
+                .join(SourceChunk, SourceChunk.id == VectorEntry.source_chunk_id)
+                .where(SourceChunk.source_id == source_id)
+            )
             return {
                 "source_id": source_id,
-                "chunk_count": chunk_count,
-                "vector_count": vector_count,
+                "chunk_count": chunk_count or 0,
+                "vector_count": vector_count or 0,
                 "deduplicated": True,
             }
 
-        conn.execute(
-            """
-            INSERT INTO source_records
-                (id, source_type, title, path, content_type, content_hash, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                source_id,
-                source_type,
-                title,
-                str(path),
-                path.suffix.lower().lstrip(".") or "text",
-                content_hash,
-                json.dumps({"normalized_characters": len(normalized_text)}),
-            ),
+        db.add(
+            SourceRecord(
+                id=source_id,
+                source_type=source_type,
+                title=title,
+                path=str(path),
+                content_type=path.suffix.lower().lstrip(".") or "text",
+                content_hash=content_hash,
+                metadata_json=json.dumps({"normalized_characters": len(normalized_text)}),
+            )
         )
+        db.flush()
         chunks = chunk_segments(source_id, segments)
         for chunk in chunks:
-            conn.execute(
-                """
-                INSERT INTO source_chunks
-                    (id, source_id, chunk_index, text, page_start, page_end, section,
-                     token_count, content_hash, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    chunk.id,
-                    chunk.source_id,
-                    chunk.chunk_index,
-                    chunk.text,
-                    chunk.page_start,
-                    chunk.page_end,
-                    chunk.section,
-                    chunk.token_count,
-                    chunk.content_hash,
-                    json.dumps({}),
-                ),
+            db.add(
+                SourceChunk(
+                    id=chunk.id,
+                    source_id=chunk.source_id,
+                    chunk_index=chunk.chunk_index,
+                    text=chunk.text,
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    section=chunk.section,
+                    token_count=chunk.token_count,
+                    content_hash=chunk.content_hash,
+                    metadata_json=json.dumps({}),
+                )
             )
+        db.flush()
         for topic_id in topic_ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO topic_sources (topic_id, source_id) VALUES (?, ?)",
-                (topic_id, source_id),
+            db.execute(
+                sqlite_insert(TopicSource)
+                .values(topic_id=topic_id, source_id=source_id)
+                .on_conflict_do_nothing()
             )
 
     vector_count = RagStore(settings).index_chunks(
@@ -166,11 +159,9 @@ def _resolve_topic_ids(
     resolved = set(topic_ids)
     if not objective_ids:
         return sorted(resolved)
-    with session(settings) as conn:
+    with session(settings) as db:
         for objective_id in objective_ids:
-            row = conn.execute(
-                "SELECT id FROM topics WHERE objective_id = ?", (objective_id,)
-            ).fetchone()
-            if row:
-                resolved.add(row["id"])
+            topic_id = db.scalar(select(Topic.id).where(Topic.objective_id == objective_id))
+            if topic_id:
+                resolved.add(topic_id)
     return sorted(resolved)

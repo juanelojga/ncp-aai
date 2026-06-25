@@ -1,8 +1,10 @@
 import pytest
+from sqlalchemy import select
 
 from ncp_aai.agents.codex_provider import CodexOutputInput
 from ncp_aai.db import session
 from ncp_aai.ingestion.service import ingest_inbox_file
+from ncp_aai.models import SourceChunk
 from ncp_aai.objectives import import_objectives
 from ncp_aai.synthesis.notes import ingest_codex_output
 from ncp_aai.synthesis.quizzes import grade_quiz_attempt
@@ -16,9 +18,10 @@ def _seed_chunk(app_settings) -> str:
         encoding="utf-8",
     )
     ingest_inbox_file("react.txt", objective_ids=["objective-1.2"], settings=app_settings)
-    with session(app_settings) as conn:
-        row = conn.execute("SELECT id FROM source_chunks LIMIT 1").fetchone()
-    return row["id"]
+    with session(app_settings) as db:
+        chunk_id = db.scalar(select(SourceChunk.id).limit(1))
+    assert chunk_id is not None
+    return chunk_id
 
 
 def test_codex_output_requires_real_citations_and_quiz_attempts_grade(app_settings):

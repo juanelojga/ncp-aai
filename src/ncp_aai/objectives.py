@@ -3,8 +3,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import session
+from ncp_aai.models import AppSetting, Domain, Objective, Topic
 
 DOMAIN_RE = re.compile(r"^## Domain (?P<number>\d+) [—-] (?P<name>.+?) \((?P<weight>\d+)%\)")
 OBJECTIVE_RE = re.compile(r"^\| (?P<number>\d+\.\d+) \| (?P<title>.+?) \|")
@@ -85,61 +89,80 @@ def import_objectives(
     total_weight = sum(domain.weight_percent for domain in parsed_domains)
     weight_discrepancy = total_weight != 100
 
-    with session(settings) as conn:
+    with session(settings) as db:
         for domain in parsed_domains:
-            conn.execute(
-                """
-                INSERT INTO domains (id, number, name, weight_percent, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(id) DO UPDATE SET
-                    number = excluded.number,
-                    name = excluded.name,
-                    weight_percent = excluded.weight_percent,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (domain.id, domain.number, domain.name, domain.weight_percent),
+            domain_insert = sqlite_insert(Domain).values(
+                id=domain.id,
+                number=domain.number,
+                name=domain.name,
+                weight_percent=domain.weight_percent,
+                updated_at=text("CURRENT_TIMESTAMP"),
+            )
+            db.execute(
+                domain_insert.on_conflict_do_update(
+                    index_elements=[Domain.id],
+                    set_={
+                        "number": domain_insert.excluded.number,
+                        "name": domain_insert.excluded.name,
+                        "weight_percent": domain_insert.excluded.weight_percent,
+                        "updated_at": text("CURRENT_TIMESTAMP"),
+                    },
+                )
             )
             for objective in domain.objectives:
-                conn.execute(
-                    """
-                    INSERT INTO objectives (id, domain_id, number, title, updated_at)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(id) DO UPDATE SET
-                        domain_id = excluded.domain_id,
-                        number = excluded.number,
-                        title = excluded.title,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (objective.id, objective.domain_id, objective.number, objective.title),
+                objective_insert = sqlite_insert(Objective).values(
+                    id=objective.id,
+                    domain_id=objective.domain_id,
+                    number=objective.number,
+                    title=objective.title,
+                    updated_at=text("CURRENT_TIMESTAMP"),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO topics (id, objective_id, title, updated_at)
-                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(id) DO UPDATE SET
-                        objective_id = excluded.objective_id,
-                        title = excluded.title,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (f"topic-{objective.number}", objective.id, objective.title),
+                db.execute(
+                    objective_insert.on_conflict_do_update(
+                        index_elements=[Objective.id],
+                        set_={
+                            "domain_id": objective_insert.excluded.domain_id,
+                            "number": objective_insert.excluded.number,
+                            "title": objective_insert.excluded.title,
+                            "updated_at": text("CURRENT_TIMESTAMP"),
+                        },
+                    )
+                )
+                topic_insert = sqlite_insert(Topic).values(
+                    id=f"topic-{objective.number}",
+                    objective_id=objective.id,
+                    title=objective.title,
+                    updated_at=text("CURRENT_TIMESTAMP"),
+                )
+                db.execute(
+                    topic_insert.on_conflict_do_update(
+                        index_elements=[Topic.id],
+                        set_={
+                            "objective_id": topic_insert.excluded.objective_id,
+                            "title": topic_insert.excluded.title,
+                            "updated_at": text("CURRENT_TIMESTAMP"),
+                        },
+                    )
                 )
 
-        conn.execute(
-            """
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES ('exam_weight_total_percent', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-            """,
-            (json.dumps(total_weight),),
-        )
-        conn.execute(
-            """
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES ('exam_weight_discrepancy_flag', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-            """,
-            (json.dumps(weight_discrepancy),),
-        )
+        for key, value in {
+            "exam_weight_total_percent": json.dumps(total_weight),
+            "exam_weight_discrepancy_flag": json.dumps(weight_discrepancy),
+        }.items():
+            setting_insert = sqlite_insert(AppSetting).values(
+                key=key,
+                value=value,
+                updated_at=text("CURRENT_TIMESTAMP"),
+            )
+            db.execute(
+                setting_insert.on_conflict_do_update(
+                    index_elements=[AppSetting.key],
+                    set_={
+                        "value": setting_insert.excluded.value,
+                        "updated_at": text("CURRENT_TIMESTAMP"),
+                    },
+                )
+            )
 
     objective_count = sum(len(domain.objectives) for domain in parsed_domains)
     return {

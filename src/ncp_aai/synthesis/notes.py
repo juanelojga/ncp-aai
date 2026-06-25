@@ -4,9 +4,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from ncp_aai.agents.codex_provider import CodexOutputInput
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import session
+from ncp_aai.models import AgentRun, Citation, Note, QuizQuestion, Topic
 from ncp_aai.synthesis.citations import validate_source_chunk_ids
 
 
@@ -27,100 +30,74 @@ def ingest_codex_output(
     model = payload.provider_metadata.model
 
     quiz_ids: list[str] = []
-    with session(settings) as conn:
-        conn.execute(
-            """
-            INSERT INTO notes
-                (id, topic_id, objective_id, title, body, provider, model, prompt_version,
-                 vault_path, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                note_id,
-                topic_id,
-                objective_id,
-                payload.title,
-                payload.note_body,
-                provider,
-                model,
-                payload.provider_metadata.prompt_version,
-                str(vault_path),
-                json.dumps(
-                    {
-                        "gaps": payload.gaps,
-                        "provider_run_id": payload.provider_metadata.run_id,
-                    }
+    with session(settings) as db:
+        db.add(
+            Note(
+                id=note_id,
+                topic_id=topic_id,
+                objective_id=objective_id,
+                title=payload.title,
+                body=payload.note_body,
+                provider=provider,
+                model=model,
+                prompt_version=payload.provider_metadata.prompt_version,
+                vault_path=str(vault_path),
+                metadata_json=json.dumps(
+                    {"gaps": payload.gaps, "provider_run_id": payload.provider_metadata.run_id}
                 ),
-            ),
+            )
         )
+        db.flush()
         for citation in payload.citations:
-            conn.execute(
-                """
-                INSERT INTO citations (id, note_id, source_chunk_id, label, quote)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    f"citation-{uuid.uuid4().hex}",
-                    note_id,
-                    citation.source_chunk_id,
-                    citation.label,
-                    citation.quote,
-                ),
+            db.add(
+                Citation(
+                    id=f"citation-{uuid.uuid4().hex}",
+                    note_id=note_id,
+                    source_chunk_id=citation.source_chunk_id,
+                    label=citation.label,
+                    quote=citation.quote,
+                )
             )
         for quiz_item in payload.quiz_items:
             quiz_id = f"quiz-{uuid.uuid4().hex}"
             quiz_ids.append(quiz_id)
-            conn.execute(
-                """
-                INSERT INTO quiz_questions
-                    (id, topic_id, objective_id, prompt, options_json, correct_option,
-                     rationale, difficulty, concept, provider, model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    quiz_id,
-                    topic_id,
-                    objective_id,
-                    quiz_item.prompt,
-                    json.dumps(quiz_item.options),
-                    quiz_item.correct_option,
-                    quiz_item.rationale,
-                    quiz_item.difficulty,
-                    quiz_item.concept,
-                    provider,
-                    model,
-                ),
-            )
-            for citation in quiz_item.citations:
-                conn.execute(
-                    """
-                    INSERT INTO citations (id, quiz_question_id, source_chunk_id, label, quote)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        f"citation-{uuid.uuid4().hex}",
-                        quiz_id,
-                        citation.source_chunk_id,
-                        citation.label,
-                        citation.quote,
-                    ),
+            db.add(
+                QuizQuestion(
+                    id=quiz_id,
+                    topic_id=topic_id,
+                    objective_id=objective_id,
+                    prompt=quiz_item.prompt,
+                    options_json=json.dumps(quiz_item.options),
+                    correct_option=quiz_item.correct_option,
+                    rationale=quiz_item.rationale,
+                    difficulty=quiz_item.difficulty,
+                    concept=quiz_item.concept,
+                    provider=provider,
+                    model=model,
                 )
-        conn.execute(
-            """
-            INSERT INTO agent_runs
-                (id, provider, model, prompt_version, input_source_ids_json,
-                 output_artifact_ids_json, status, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, 'complete', ?)
-            """,
-            (
-                f"run-{uuid.uuid4().hex}",
-                provider,
-                model,
-                payload.provider_metadata.prompt_version,
-                json.dumps(sorted(set(chunk_ids))),
-                json.dumps([note_id, *quiz_ids]),
-                json.dumps({"mode": "operator_output_ingestion"}),
-            ),
+            )
+            db.flush()
+            for citation in quiz_item.citations:
+                db.add(
+                    Citation(
+                        id=f"citation-{uuid.uuid4().hex}",
+                        quiz_question_id=quiz_id,
+                        source_chunk_id=citation.source_chunk_id,
+                        label=citation.label,
+                        quote=citation.quote,
+                    )
+                )
+        db.add(
+            AgentRun(
+                id=f"run-{uuid.uuid4().hex}",
+                provider=provider,
+                model=model,
+                prompt_version=payload.provider_metadata.prompt_version,
+                input_source_ids_json=json.dumps(sorted(set(chunk_ids))),
+                output_artifact_ids_json=json.dumps([note_id, *quiz_ids]),
+                status="complete",
+                metadata_json=json.dumps({"mode": "operator_output_ingestion"}),
+            )
         )
 
     return {
@@ -145,9 +122,7 @@ def write_note_file(payload: CodexOutputInput, note_id: str, settings: Settings)
         "prompt_version": payload.provider_metadata.prompt_version,
     }
     content = (
-        "---\n"
-        + "\n".join(f"{key}: {value}" for key, value in frontmatter.items())
-        + "\n---\n\n"
+        "---\n" + "\n".join(f"{key}: {value}" for key, value in frontmatter.items()) + "\n---\n\n"
     )
     path.write_text(content + payload.note_body.strip() + "\n", encoding="utf-8")
     return path
@@ -156,20 +131,15 @@ def write_note_file(payload: CodexOutputInput, note_id: str, settings: Settings)
 def _topic_for_objective(objective_id: str | None, settings: Settings) -> str | None:
     if objective_id is None:
         return None
-    with session(settings) as conn:
-        row = conn.execute(
-            "SELECT id FROM topics WHERE objective_id = ?",
-            (objective_id,),
-        ).fetchone()
-    return row["id"] if row else None
+    with session(settings) as db:
+        return db.scalar(select(Topic.id).where(Topic.objective_id == objective_id))
 
 
 def _objective_for_topic(topic_id: str | None, settings: Settings) -> str | None:
     if topic_id is None:
         return None
-    with session(settings) as conn:
-        row = conn.execute("SELECT objective_id FROM topics WHERE id = ?", (topic_id,)).fetchone()
-    return row["objective_id"] if row else None
+    with session(settings) as db:
+        return db.scalar(select(Topic.objective_id).where(Topic.id == topic_id))
 
 
 def _slugify(value: str) -> str:

@@ -4,9 +4,12 @@ import threading
 import uuid
 from typing import Any
 
+from sqlalchemy import text, update
+
 from ncp_aai.agents.codex_provider import CodexOutputInput
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import session
+from ncp_aai.models import InvestigationJob
 from ncp_aai.rag.store import RagStore
 from ncp_aai.synthesis.notes import ingest_codex_output
 
@@ -42,13 +45,15 @@ class InvestigationWorker:
         codex_output: dict[str, Any] | None = None,
     ) -> str:
         job_id = f"job-{uuid.uuid4().hex}"
-        with session(self.settings) as conn:
-            conn.execute(
-                """
-                INSERT INTO investigation_jobs (id, topic_id, status, query, logs_json)
-                VALUES (?, ?, 'queued', ?, ?)
-                """,
-                (job_id, topic_id, query, json.dumps(["Queued investigation job."])),
+        with session(self.settings) as db:
+            db.add(
+                InvestigationJob(
+                    id=job_id,
+                    topic_id=topic_id,
+                    status="queued",
+                    query=query,
+                    logs_json=json.dumps(["Queued investigation job."]),
+                )
             )
         self._payloads[job_id] = {"query": query, "codex_output": codex_output}
         self._queue.put(job_id)
@@ -75,17 +80,14 @@ class InvestigationWorker:
                 )
 
     def _process(self, job_id: str, payload: dict[str, Any]) -> None:
-        with session(self.settings) as conn:
-            job = conn.execute(
-                "SELECT * FROM investigation_jobs WHERE id = ?",
-                (job_id,),
-            ).fetchone()
+        with session(self.settings) as db:
+            job = db.get(InvestigationJob, job_id)
         if job is None:
             return
 
-        query = payload.get("query") or job["query"] or ""
+        query = payload.get("query") or job.query or ""
         _update_job(job_id, self.settings, status="collecting_sources", log="Querying local RAG.")
-        results = RagStore(self.settings).query(query, k=5, topic_id=job["topic_id"])
+        results = RagStore(self.settings).query(query, k=5, topic_id=job.topic_id)
         _update_job(
             job_id,
             self.settings,
@@ -128,55 +130,45 @@ def _update_job(
     error: str | None = None,
     complete: bool = False,
 ) -> None:
-    with session(settings) as conn:
-        row = conn.execute(
-            "SELECT logs_json, gaps_json, artifact_ids_json FROM investigation_jobs WHERE id = ?",
-            (job_id,),
-        ).fetchone()
-        if row is None:
+    with session(settings) as db:
+        job = db.get(InvestigationJob, job_id)
+        if job is None:
             return
-        logs = json.loads(row["logs_json"])
+        logs = json.loads(job.logs_json)
         if log:
             logs.append(log)
-        current_gaps = json.loads(row["gaps_json"])
+        current_gaps = json.loads(job.gaps_json)
         if gaps:
             current_gaps.extend(gaps)
-        current_artifacts = json.loads(row["artifact_ids_json"])
+        current_artifacts = json.loads(job.artifact_ids_json)
         if artifacts:
             current_artifacts.extend(artifacts)
 
         if complete:
-            conn.execute(
-                """
-                UPDATE investigation_jobs
-                SET status = ?, logs_json = ?, gaps_json = ?, artifact_ids_json = ?,
-                    error = ?, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (
-                    status,
-                    json.dumps(logs),
-                    json.dumps(current_gaps),
-                    json.dumps(current_artifacts),
-                    error,
-                    job_id,
-                ),
+            db.execute(
+                update(InvestigationJob)
+                .where(InvestigationJob.id == job_id)
+                .values(
+                    status=status,
+                    logs_json=json.dumps(logs),
+                    gaps_json=json.dumps(current_gaps),
+                    artifact_ids_json=json.dumps(current_artifacts),
+                    error=error,
+                    updated_at=text("CURRENT_TIMESTAMP"),
+                    completed_at=text("CURRENT_TIMESTAMP"),
+                )
             )
         else:
-            conn.execute(
-                """
-                UPDATE investigation_jobs
-                SET status = ?, logs_json = ?, gaps_json = ?, artifact_ids_json = ?,
-                    error = ?, updated_at = CURRENT_TIMESTAMP,
-                    started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
-                WHERE id = ?
-                """,
-                (
-                    status,
-                    json.dumps(logs),
-                    json.dumps(current_gaps),
-                    json.dumps(current_artifacts),
-                    error,
-                    job_id,
-                ),
+            db.execute(
+                update(InvestigationJob)
+                .where(InvestigationJob.id == job_id)
+                .values(
+                    status=status,
+                    logs_json=json.dumps(logs),
+                    gaps_json=json.dumps(current_gaps),
+                    artifact_ids_json=json.dumps(current_artifacts),
+                    error=error,
+                    updated_at=text("CURRENT_TIMESTAMP"),
+                    started_at=text("COALESCE(started_at, CURRENT_TIMESTAMP)"),
+                )
             )
