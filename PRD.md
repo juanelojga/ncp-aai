@@ -1,129 +1,212 @@
-# PRD — NCP-AAI Personal Agentic Study Engine
+# PRD - NCP-AAI Agentic Study Platform
 
-> A self-improving, local-first study environment for the **NVIDIA NCP-AAI (Agentic AI Professional)** certification. Combines an Obsidian knowledge vault, local RAG (ChromaDB), an autonomous investigation agent (OpenCode orchestrator + Hermes persistent memory), and an interactive Lavish study/review loop.
+> A local-first, Dockerized research and study platform for the NVIDIA NCP-AAI certification. The system investigates each exam topic in parts, collects and cites high-quality sources from web pages, PDFs, YouTube transcripts, official documentation, local files, and agent outputs, then turns that material into an interactive study web app with RAG, quizzes, exercises, feedback, and readiness tracking.
 
-**Status:** v1.0 — discovery complete; ready to build. (MiniMax setup deferred — owner-owned.)
-**Owner:** Solo candidate (cloud-first, single-user).
+**Status:** v2.0 - expanded product direction approved.
+**Owner:** Solo candidate.
+**Primary UI:** Web app.
+**Deployment target:** Single Docker container with bind-mounted persistent data on disk.
+**MVP decisions:** Codex-first investigation provider, React/Vite frontend, SQLite database.
 
 ---
 
 ## 1. Executive Summary
 
-**Problem Statement.**
-Preparing for NCP-AAI means absorbing a large, fast-moving body of NVIDIA-specific platform knowledge (NeMo, NIM, Guardrails, multi-agent orchestration, evaluation) that is scattered across docs, papers, and release notes. Passive reading + manual note-taking doesn't produce reliable recall or measurable readiness, and it leaves no reusable, queryable asset.
+### Problem Statement
 
-**Proposed Solution.**
-A personal agentic study engine where the candidate triggers a topic (e.g., *"Implement reasoning and action frameworks"*), and an autonomous agent (1) checks the local knowledge base first (RAG over Obsidian), (2) investigates gaps via web search, (3) writes a structured Obsidian note (concepts + NVIDIA context + Mermaid diagram + citations), (4) generates exam-style quizzes, and (5) presents an interactive, annotatable study guide in Lavish whose feedback loop refines the material live.
+Preparing for NCP-AAI requires learning a broad, fast-moving body of agentic AI and NVIDIA platform knowledge scattered across official docs, papers, PDFs, videos, GitHub repos, release notes, blogs, and personal notes. Manual research does not scale across every exam topic, and passive notes do not reliably produce exam readiness.
 
-**Success Criteria (KPIs).**
-1. **Pass NCP-AAI on first attempt** (binary, ultimate outcome).
-2. **≥ 100% official-objective coverage**: every exam objective has ≥ 1 Obsidian study note **and** ≥ 3 vetted quiz items.
-3. **Question bank ≥ 300** items, each with a verified-correct keyed answer + source citation.
-4. **Quiz readiness gate**: ≥ 85% mean score across the last 5 self-graded quizzes per domain.
-5. **RAG retrieval quality**: ≥ 85% Precision@5 on a held-out set of 50 topic queries.
-6. **Time-to-note < 5 min** from investigation trigger to a saved, structured Obsidian note.
-7. **Quiz answer-key accuracy ≥ 95%** (unambiguously correct, citation-backed).
-8. **Ingestion throughput: 100-page PDF → wiki + RAG in < 60 s** (excluding optional OCR).
+### Proposed Solution
+
+Build a single-user agentic study platform with two main systems:
+
+1. **Investigation Engine:** asynchronously researches one topic or sub-objective at a time, gathers source material from multiple source types, extracts relevant content, cites every claim, stores raw and normalized artifacts, and produces structured study material.
+2. **Study Web App:** provides the main student experience for triggering investigations, browsing topic coverage, asking questions, reviewing sources, taking quizzes, receiving exercises, giving feedback, and tracking readiness toward passing the exam.
+
+The app runs inside one Docker container. All user data, source artifacts, vector indexes, generated notes, quiz history, and app state are persisted through mounted host directories so deleting or rebuilding the container does not delete study data.
+
+### Success Criteria
+
+1. **Exam objective coverage:** 100% of objectives in `EXAM_OBJECTIVES.md` have at least one synthesized study note, at least three quiz items, and at least three cited source references.
+2. **Research breadth:** each completed objective includes sources from at least two source categories when available, such as official docs, PDFs, videos, GitHub, or articles.
+3. **Citation grounding:** at least 95% of non-trivial generated claims in study notes map to a stored source citation or local vault reference.
+4. **Question bank:** at least 300 validated exam-style questions with answer, rationale, difficulty, topic mapping, and citation.
+5. **Readiness gate:** user reaches at least 85% average score across the last five quizzes for every weighted domain.
+6. **RAG quality:** retrieval reaches at least 85% Precision@5 on a 50-query held-out benchmark.
+7. **Persistence guarantee:** deleting and recreating the Docker container keeps all study data intact when host data mounts are preserved.
+8. **Incremental investigation:** a topic can be resumed across multiple jobs without duplicate sources or lost work.
 
 ---
 
 ## 2. User Experience & Functionality
 
 ### User Personas
-- **The Candidate (primary).** A technical cert aspirant who wants depth, NVIDIA-specific context, active recall practice, and a permanent searchable second brain — not another set of generic AI flashcards.
+
+- **The Candidate:** a technical certification candidate who wants comprehensive research, active recall, source-backed explanations, and measurable readiness.
+- **The Investigation Agent Operator:** the same user when supervising agents, reviewing source quality, retrying failed jobs, and approving generated study material.
+
+### Core Product Areas
+
+#### A. Investigation Engine
+
+The investigation engine researches topics in parts. It does not need to collect every possible source in one run. It must support resumable jobs, topic coverage state, source deduplication, and agent-provider adapters.
+
+Supported source categories:
+
+- Official NVIDIA documentation, courses, blogs, whitepapers, release notes, and GitHub repositories.
+- Certification PDFs and downloaded local PDFs.
+- YouTube videos through metadata and transcripts when available.
+- Web articles, standards, papers, and technical documentation.
+- Local Markdown, text, HTML, and existing Obsidian notes.
+- Student-provided documents, papers, URLs, pasted notes, and raw information attached to specific topics.
+- Outputs produced by Codex, Claude, OpenAI models, Hermes, or future investigation agents.
+
+#### B. Study Web App
+
+The web app replaces Lavish as the primary study interface. Lavish remains optional for rich generated artifacts, but the main daily workflow happens in the app.
+
+Primary screens:
+
+- **Dashboard:** domain readiness, objective coverage, recent activity, weak areas, and active investigations.
+- **Objectives:** browse the exam objective tree from `EXAM_OBJECTIVES.md`.
+- **Topic Detail:** view investigation status, source list, synthesized notes, diagrams, questions, exercises, and unresolved gaps.
+- **Add Material:** upload or paste documents, papers, notes, links, and raw information into a topic's investigation material.
+- **Investigation Console:** trigger, pause, resume, retry, or inspect research jobs.
+- **Study Chat:** ask grounded questions using RAG over collected material.
+- **Quiz & Exercises:** take exam-style questions, receive explanations, and get targeted drills.
+- **Sources:** inspect PDFs, web pages, video transcripts, metadata, extracted text, and citations.
+- **Settings:** configure model providers, API keys, source limits, data paths, and Docker persistence paths.
 
 ### User Stories & Acceptance Criteria
 
-**US-1 — Trigger an investigation**
-> *As a candidate, I want to say "Investigate reasoning and action frameworks" and get a complete, sourced study unit, so that I don't manually hunt across docs.*
-- **AC-1.1** Agent runs `query_knowledge_base(topic)` before any web call; reuses/synthesizes existing notes when coverage ≥ threshold.
-- **AC-1.2** If gaps exist, agent performs targeted web search (≥ 3 distinct sources) and fetches content.
-- **AC-1.3** Output is one Obsidian note with sections: **Core Concepts**, **NVIDIA Context**, **Mermaid diagram**, **Key terms**, **References** (with URLs).
-- **AC-1.4** Note saved to vault via REST API within **< 5 min** of trigger.
-- **AC-1.5** A structured quiz (≥ 5 items) is attached or linked.
+**US-1 - Trigger an investigation**
 
-**US-2 — Review interactively in Lavish**
-> *As a candidate, I want the study guide in my browser so I can highlight a part and ask a follow-up that updates the page live.*
-- **AC-2.1** Agent emits a self-contained `index.html` (Tailwind/DaisyUI + Mermaid CDN) and opens it via `npx lavish-axi`.
-- **AC-2.2** Candidate can highlight text/elements and submit a prompt; agent receives the precise context via `lavish-axi poll`.
-- **AC-2.3** Agent applies feedback, rewrites the file, and Lavish **live-reloads** without losing scroll place.
-- **AC-2.4** Every factual claim in the artifact is cite-able to a source URL or vault note.
+As a candidate, I want to start an investigation for one objective or topic so that the system gathers relevant source material and creates a study unit.
 
-**US-3 — Generate and take a quiz**
-> *As a candidate, I want exam-style questions on a topic with immediate feedback so I can practice active recall.*
-- **AC-3.1** Quiz is multiple-choice (4 options) unless requested otherwise, with exactly one unambiguously correct answer.
-- **AC-3.2** Each item carries a **rationale** and a **source citation**.
-- **AC-3.3** Interactive quiz runs in-browser (Lavish) with per-question correctness feedback + running score.
-- **AC-3.4** Answer-key accuracy ≥ 95% on a sampled audit.
+- **AC-1.1:** The app supports starting an investigation from an objective, topic page, or free-text prompt.
+- **AC-1.2:** The investigation is stored as a resumable job with status: `queued`, `collecting_sources`, `extracting`, `synthesizing`, `needs_review`, `complete`, or `failed`.
+- **AC-1.3:** The job queries the local knowledge base before external search.
+- **AC-1.4:** The job collects sources from configurable source categories and records source metadata.
+- **AC-1.5:** The job can stop after a bounded batch and resume later without duplicating unchanged sources.
 
-**US-4 — Query my own knowledge base**
-> *As a candidate, I want to ask "what do I already know about Guardrails?" and get grounded answers from my notes.*
-- **AC-4.1** RAG retrieves top-k chunks from ChromaDB with source note + heading links.
-- **AC-4.2** Retrieval Precision@5 ≥ 85% on held-out queries.
+**US-2 - Collect comprehensive source material in parts**
 
-**US-5 — See coverage & readiness**
-> *As a candidate, I want a dashboard of which exam objectives I've covered and my quiz readiness.*
-- **AC-5.1** Dashboard maps objectives → {has note, has ≥3 quiz items, last quiz score}.
-- **AC-5.2** Flags objectives below readiness gate.
+As a candidate, I want the system to explore official docs, PDFs, YouTube videos, GitHub repos, and web sources over multiple passes so that each topic becomes deeply researched.
 
-**US-6 — Ingest raw documents**
-> *As a candidate, I want to drop in a PDF or markdown file (a paper, a docs export, my own notes) so it gets parsed, chunked, and added to my wiki + RAG.*
-- **AC-6.1** Accepts `.pdf` and `.md` (also `.txt`, `.html`) via a watched `inbox/` folder **or** an `ingest_document(path)` call.
-- **AC-6.2** PDFs are converted to clean Markdown (layout/tables preserved where possible) using a local parser; scanned/image PDFs optionally OCR'd.
-- **AC-6.3** Source provenance recorded (original filename, page numbers, ingest timestamp) in front-matter + chunk metadata.
-- **AC-6.4** Chunks are embedded into ChromaDB **and** a readable Markdown copy is filed in the Obsidian vault.
-- **AC-6.5** Idempotent: re-ingesting an unchanged file (content-hash dedup) creates no duplicate chunks.
-- **AC-6.6** A 100-page PDF ingests in **< 60 s** (excluding optional OCR).
+- **AC-2.1:** Each source has a stable ID, URL or file path, content type, retrieval timestamp, hash, title, and topic mapping.
+- **AC-2.2:** PDFs are parsed into page-aware Markdown or text with page citations.
+- **AC-2.3:** YouTube videos are represented by metadata and transcript text when transcripts are available.
+- **AC-2.4:** Web pages are converted to normalized Markdown or text with URL provenance.
+- **AC-2.5:** Source extraction failures are stored with error details and retry status.
+- **AC-2.6:** Investigation jobs record unexplored leads for later passes.
 
-### Non-Goals (v1)
-- **Not** training or fine-tuning models.
-- **Not** a mobile app.
-- **Not** a multi-user/cloud SaaS — strictly single-user, local-first.
-- **Not** a replacement for official NVIDIA courseware — a complement/accelerator.
-- **Not** automated study-calendar scheduling (deferred to v2).
-- **Not** proctoring or real exam simulation UI beyond practice quizzes.
+**US-3 - Generate study material**
+
+As a candidate, I want each investigated topic converted into notes, diagrams, summaries, quizzes, and exercises so that I can study efficiently.
+
+- **AC-3.1:** Each completed topic has a synthesized study note with concepts, NVIDIA context, implementation details, diagrams, key terms, and references.
+- **AC-3.2:** The system generates at least five quiz questions per topic by default.
+- **AC-3.3:** Every quiz question includes one correct answer, distractors, rationale, difficulty, objective mapping, and citations.
+- **AC-3.4:** Generated material marks uncertain claims for review instead of presenting them as fact.
+- **AC-3.5:** User feedback can trigger a regeneration or targeted follow-up investigation.
+
+**US-4 - Study through the web app**
+
+As a candidate, I want a browser-based app that guides my study workflow so that I can learn, practice, and measure readiness in one place.
+
+- **AC-4.1:** The dashboard displays coverage and readiness by exam domain and sub-objective.
+- **AC-4.2:** The topic detail page shows notes, citations, source list, quizzes, exercises, and job history.
+- **AC-4.3:** The chat answers questions using RAG and shows citations from stored sources.
+- **AC-4.4:** Quiz attempts are saved with score, timestamp, topic, domain, and missed concepts.
+- **AC-4.5:** The app recommends exercises based on weak topics and recent quiz failures.
+
+**US-5 - Persist data outside Docker**
+
+As a candidate, I want all study data to remain on disk even if I delete or recreate the container.
+
+- **AC-5.1:** The Docker container uses bind mounts for all persistent paths.
+- **AC-5.2:** Required host-mounted directories include `./data`, `./vault`, `./inbox`, and `./artifacts`.
+- **AC-5.3:** Application state, source registry, vector database, generated notes, artifacts, and quiz history are written only to mounted persistent paths.
+- **AC-5.4:** A documented restore test deletes and recreates the container, then verifies that topics, sources, embeddings, notes, and quiz history remain available.
+
+**US-6 - Add student-provided material**
+
+As a candidate, I want to add documents, papers, links, notes, and raw information to a topic so that my own material becomes part of the investigated corpus and knowledge base.
+
+- **AC-6.1:** The topic detail page supports adding material by file upload, local inbox selection, URL, or pasted raw text.
+- **AC-6.2:** Supported MVP file types include `.pdf`, `.md`, `.txt`, and `.html`.
+- **AC-6.3:** Added material is attached to one or more topics or objectives before ingestion.
+- **AC-6.4:** The system creates a `SourceRecord` for the material with provenance, content hash, source type, ingest timestamp, and user-supplied notes.
+- **AC-6.5:** The material is normalized, chunked, embedded, and added to ChromaDB so future RAG answers and investigations can retrieve it.
+- **AC-6.6:** Added material appears in the topic source list and can be cited by generated notes, answers, quizzes, and exercises.
+- **AC-6.7:** Re-adding unchanged material does not duplicate source records, chunks, or vectors.
+
+**US-7 - Use multiple investigation agents**
+
+As an operator, I want the platform to support Codex, Claude, OpenAI models, Hermes, or other agents so that I can route research to the best available tool.
+
+- **AC-7.1:** The backend defines a provider adapter interface for investigation agents.
+- **AC-7.2:** The first version may implement one provider, but the interface must support adding others without changing topic, source, or job schemas.
+- **AC-7.3:** Each generated artifact records the provider, model, prompt template version, timestamp, and source inputs.
+
+### Non-Goals for MVP
+
+- Multi-user SaaS.
+- Mobile app.
+- Model fine-tuning.
+- Full proctored exam simulator.
+- Browser automation that bypasses paywalls or terms of service.
+- Downloading copyrighted videos or restricted PDFs without user-provided access.
+- Kubernetes deployment.
+- Multiple Docker services in MVP.
 
 ---
 
 ## 3. AI System Requirements
 
-### Model Stack (cloud-first, local fallback) — strength-routed
+### Tool Requirements
 
-Cloud models are primary (best quality, no VRAM limits); local models serve as offline fallback. Routing by model strength:
+- `query_knowledge_base(query, filters, k)` - retrieve source-backed chunks from ChromaDB.
+- `ingest_document(path, source_type, metadata)` - parse local files into normalized text and chunks.
+- `add_user_material(topic_id, material)` - attach user-provided files, URLs, or raw text to a topic and ingest them into the knowledge base.
+- `search_web(query, source_policy)` - collect candidate web results.
+- `fetch_web_page(url)` - fetch and normalize public pages.
+- `fetch_pdf(url_or_path)` - ingest PDFs from URL or local path.
+- `fetch_youtube_transcript(video_url)` - store video metadata and transcript when available.
+- `search_github(query)` - collect repository, file, issue, or documentation leads when relevant.
+- `run_investigation(topic_id, batch_limits)` - execute a bounded investigation pass.
+- `synthesize_topic(topic_id)` - generate notes, references, quizzes, exercises, and unresolved gaps.
+- `grade_quiz_attempt(attempt_id)` - score and store user performance.
+- `record_feedback(topic_id, feedback)` - attach feedback and optionally create follow-up jobs.
 
-| Task | Primary (cloud) | Why this model | Fallback (local) |
-|------|-----------------|----------------|------------------|
-| Investigation / multi-source synthesis / quiz generation / evaluation | `deepseek/deepseek-v4-pro` | Top-tier reasoning rigor | `qwen2.5-coder:7b-32k` |
-| Structured note authoring · Mermaid diagrams · JSON/tool calls · code scaffolding | `zai/glm-5.1` | Strong structured output + code | `gemma4:e4b-64k` |
-| Fast ops: routing, classification, streaming chat, simple lookups | `deepseek/deepseek-v4-flash` / `zai/glm-5-turbo` | Speed + cost | `qwen2.5-coder:7b-32k` |
-| Long-context doc ingestion (100+ page PDFs) | `deepseek/deepseek-v4-pro` *(MiniMax pending)* | Long context | — |
-| Embeddings (RAG) | **all-MiniLM-L6-v2** (384-d) · `sentence-transformers` | Cheap, local, deterministic | — |
+### Agent Provider Requirements
 
-**Configured providers** (per `~/.config/opencode/opencode.json`): `deepseek` (v4-pro, v4-flash), `zai` (glm-5, glm-5.1, glm-5-turbo), `openrouter` (qwen3.6-plus), `ollama` (qwen2.5-coder:7b-32k, gemma4:e4b-64k) for fallback.
-**MiniMax — deferred (owner-owned).** Ideal role: long-context (1M) ingestion + multimodal. Owner will configure the provider later (direct or via OpenRouter). Non-blocking for MVP; long-context ingestion uses `deepseek-v4-pro` until MiniMax is wired.
+The MVP uses Codex as the first investigation provider. The platform must not hard-code Codex as the permanent investigation engine; it should provide an adapter boundary for:
 
-> Local fallback note: configured local models are 7B-class. For higher-quality offline fallback on the 16 GB GPU, optionally pull `qwen2.5:14b-instruct` — recommended for resilience.
+- Codex for the first repo-aware investigation workflow, source processing, and structured task execution.
+- Claude or OpenAI-compatible APIs for deep synthesis and long-form explanation.
+- Hermes for persistent learning memory if configured.
+- Local fallback models when available.
 
-### Tool Requirements (agent function-calling surface)
-- `query_knowledge_base(topic, k=5)` — RAG over ChromaDB.
-- `ingest_document(path)` — parse PDF/MD/HTML/TXT → Markdown → chunk → embed → ChromaDB **and** file a readable copy in the vault; idempotent via content-hash dedup.
-- `web_search(query)` — Tavily **or** DuckDuckGo (provider + key **TBD**).
-- `webfetch(url)` — fetch + markdown-convert.
-- `vault_write(path, content)` / `vault_read(path)` / `vault_search(query)` — Obsidian Local REST API (`localhost:27124`).
-- `render_mermaid(spec)` — validate syntax before emit (lint).
-- `lavish_present(html_path)` / `lavish_poll` / `lavish_reply` — Lavish loop via `npx -y lavish-axi`.
-- `generate_quiz(topic, n, schema)` — returns JSON validated against a quiz schema.
+Each provider adapter must expose:
 
-### Agent Roles
-- **OpenCode — Orchestrator & primary investigator.** Owns the investigation loop (ReAct-style): observe query → RAG check → decide search → synthesize → write note → present in Lavish. Has native web/bash/fs access; lowest setup cost.
-- **Hermes — Persistent learning memory.** Long-term memory across sessions; accumulates NVIDIA-domain context (e.g., remembers "Guardrails" when later asked "Guardrails + NIM"). Provides the *self-improving* recall layer.
+- capabilities,
+- model identifier,
+- max context,
+- tool access policy,
+- cost or rate-limit metadata when known,
+- structured output support,
+- execution logs,
+- error and retry behavior.
 
 ### Evaluation Strategy
-- **Retrieval eval:** held-out 50-query set; measure Precision@5 / Recall@5; regenerate when embeddings change.
-- **Quiz quality:** (a) every item passes JSON schema, (b) ≥ 95% answer-key correctness on a sampled audit, (c) citation present.
-- **Study-note completeness rubric** (LLM-judge, 0–4 each): definition, NVIDIA context, diagram correctness, quiz presence, citation grounding.
-- **Groundedness/anti-hallucination:** every non-trivial claim maps to a source URL or vault note ID; ungrounded claims flagged.
-- **Coverage:** objectives × {note?, ≥3 quiz?, last score}.
+
+- **Source quality:** completed topics must include source diversity, source recency where relevant, and official-source preference for NVIDIA-specific facts.
+- **Groundedness:** generated notes and answers must cite stored sources. Unsupported claims are flagged.
+- **Quiz quality:** sampled audits must reach at least 95% answer-key correctness.
+- **RAG quality:** evaluate Precision@5 on at least 50 hand-authored queries.
+- **Coverage:** every objective in `EXAM_OBJECTIVES.md` maps to topic records, source records, notes, and quiz items.
+- **Persistence:** container recreation test must confirm all persistent state survives.
 
 ---
 
@@ -133,96 +216,152 @@ Cloud models are primary (best quality, no VRAM limits); local models serve as o
 
 ```mermaid
 flowchart LR
-    subgraph Capture["Obsidian Vault (NVIDIA-NCP-AAI-Study)"]
-        MD[("Markdown notes")]
-        OAPI[Obsidian Local REST API<br/>localhost:27124]
-        MD <--> OAPI
-    end
-    INBOX[("Inbox<br/>PDF/MD/HTML/TXT")] -->|ingest_document| PARSE[Normalizer<br/>PDF/HTML -> Markdown]
-    PARSE --> CHUNK[Chunker<br/>header + sliding window]
-    CHUNK --> EMB[Embedder<br/>all-MiniLM-L6-v2]
-    EMB --> VDB[("ChromaDB<br/>persistent")]
-    OAPI -.->|poll on change<br/>or webhook| CHUNK
+    U[User Browser] --> WEB[Study Web App]
+    WEB --> API[FastAPI Backend]
+    API --> DB[(SQLite database file<br/>mounted in ./data)]
+    API --> VDB[(ChromaDB<br/>mounted in ./data/chroma)]
+    API --> FS[(Mounted storage<br/>./vault ./inbox ./artifacts)]
+    API --> JOBS[Investigation Worker<br/>same container process]
 
-    CAND[("Candidate")] -->|trigger topic| OC
-    subgraph Agent["Investigation Agent"]
-        OC[OpenCode<br/>orchestrator / ReAct loop]
-        HM[Hermes<br/>persistent memory]
-        OC <--> HM
-    end
-    OC -->|RAG first| VDB
-    OC -->|gap fill| WS[web_search / webfetch]
-    OC -->|vault_write via REST API| OAPI
-    OC -->|generate| MMD[Mermaid diagram]
-    OC -->|study guide / quiz| LAV
-    LAV[Lavish HTML artifact] -->|open in browser| BR[Browser]
-    BR -.->|highlight + prompt via poll| OC
-    OC -->|update + live-reload| LAV
-    OC --> QZ[Quiz JSON<br/>schema-validated]
+    JOBS --> RAG[Local RAG]
+    JOBS --> SRC[Source Collectors]
+    SRC --> WEBP[Web pages]
+    SRC --> PDF[PDFs]
+    SRC --> YT[YouTube transcripts]
+    SRC --> GH[GitHub/docs]
+    SRC --> LOCAL[Local files]
+
+    JOBS --> AGENTS[Agent Provider Adapters<br/>Codex Claude OpenAI Hermes local]
+    AGENTS --> SYN[Synthesis<br/>notes quizzes exercises]
+    SYN --> DB
+    SYN --> VDB
+    SYN --> FS
 ```
 
-**Data flow:** Two ingest paths feed the vector store — **(a)** live Obsidian edits via the Local REST API (polled or webhook-triggered), and **(b)** raw documents dropped in `inbox/` (PDF/MD/HTML/TXT) normalized to Markdown via `ingest_document`. Both → chunk → embed → ChromaDB. Trigger → agent RAG-checks ChromaDB → (gaps) web search/fetch → synthesizes → writes Obsidian note via REST API + Mermaid + quiz → presents Lavish artifact → candidate annotates → agent refines → live reload.
+### Single-Container Deployment
 
-### Integration Points
-| Point | Detail |
-|-------|--------|
-| LLM (cloud, primary) | DeepSeek API (`api.deepseek.com`: v4-pro, v4-flash), ZAI (GLM-5/5.1/5-turbo), OpenRouter (qwen3.6-plus) — via opencode config. |
-| LLM (local, fallback) | Ollama `http://localhost:11434` (qwen2.5-coder:7b-32k, gemma4:e4b-64k). |
-| Obsidian vault | Local REST API plugin (`http://localhost:27124`); read/write/search via HTTP. Vault dir `NVIDIA-NCP-AAI-Study/` is managed by Obsidian — no direct filesystem writes. |
-| Inbox (raw docs) | `NVIDIA-NCP-AAI-Study/inbox/` for PDF/MD/HTML/TXT (filesystem); `ingest_document(path)` normalizes → Markdown → vault via REST API + ChromaDB. PDF parsing via `pymupdf` (MarkItDown alt); OCR via `tesseract` (optional, scanned PDFs). |
-| Vector store | ChromaDB persistent client at `./chroma_db`. |
-| Web search | **DuckDuckGo** (free, no API key) — resolved. Results cached in vault. |
-| Lavish | `npx -y lavish-axi` (no global install). |
+The MVP uses a single Docker image and one container for the web app, API, background worker, local source processing, and RAG services.
+
+Required host mounts:
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./data` | `/app/data` | App database, ChromaDB, job state, settings, logs |
+| `./vault` | `/app/vault` | Generated study notes and optional Obsidian-compatible Markdown |
+| `./inbox` | `/app/inbox` | User-dropped PDFs, Markdown, HTML, text, and other inputs |
+| `./artifacts` | `/app/artifacts` | Generated HTML, diagrams, exports, reports |
+
+Deleting the container must not delete any files in these host directories.
+
+### Recommended Initial Stack
+
+| Component | Choice | Reason |
+|---|---|---|
+| Backend | FastAPI | Good fit for API, workers, Python RAG, and future agent tools |
+| Frontend | React/Vite built into the same container | Rich study interactions while preserving single-container deployment |
+| Database | SQLite for MVP, with schema compatible with later Postgres migration | Simple single-user persistence on disk |
+| Vector store | ChromaDB persistent client | Local RAG and simple persistence |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Local, deterministic, inexpensive |
+| PDF parsing | PyMuPDF first, optional OCR later | Reliable local PDF extraction |
+| YouTube transcripts | transcript API when available | Avoid video downloads and preserve text provenance |
+| Background jobs | In-process queue for MVP | Avoid multi-service complexity |
+| Docker | One image, bind-mounted data | Matches user requirement |
+
+### Data Model
+
+Minimum persistent entities:
+
+- `domains`
+- `objectives`
+- `topics`
+- `investigation_jobs`
+- `source_records`
+- `source_chunks`
+- `topic_sources`
+- `notes`
+- `citations`
+- `quiz_questions`
+- `quiz_attempts`
+- `exercise_recommendations`
+- `agent_runs`
+- `feedback_items`
 
 ### Security & Privacy
-- **Data flow (cloud-first):** investigation prompts, note text, and quiz content are sent to cloud LLM providers (DeepSeek, ZAI, OpenRouter). Embeddings + vector store stay **local** (MiniLM + ChromaDB); vault files stay on-device. Mind each provider's retention policy — avoid putting sensitive personal data in prompts.
-- **Secrets:** all API keys in `.env` (gitignored); never hard-coded; never logged.
-- **Vault integrity:** agent writes are namespaced to a study folder; destructive ops require confirmation.
-- **Provenance:** every generated note records source URLs + model + timestamp in front-matter for auditability.
+
+- API keys are loaded from `.env` or mounted secrets and are never committed.
+- Source collection must respect robots, access limits, copyright, and user-provided credentials.
+- Cloud agent providers may receive prompts, extracted source text, and generated notes. The UI must make this clear.
+- All persistent local study data lives in mounted host directories.
+- Destructive actions on stored notes, sources, or quiz history require explicit confirmation in the app.
 
 ---
 
 ## 5. Risks & Roadmap
 
-### Phased Rollout  *(exam: Nov 4, 2026 · ~4.5 mo runway)*
-- **MVP** *(target: ~Jul 6)* — Obsidian vault + `rag_engine.py` (poll REST API → chunk → embed → ChromaDB → `query_knowledge_base`) + `ingest_document` (PDF/MD → REST API write) + OpenCode investigator (RAG + DuckDuckGo + note via REST API + Mermaid) + basic Lavish study guide. Cloud models: deepseek-v4-pro (investigate/quiz), glm-5.1 (notes/Mermaid).
-- **v1.1** *(target: ~Aug 17)* — Hermes persistent-memory layer; coverage/readiness dashboard; quiz eval harness + anti-hallucination checks.
-- **v2.0** *(target: ~Sep 21; study Sep–Oct)* — Interactive in-Lavish quizzes with grading; spaced-repetition scheduling; multi-agent (Planner/Executor) orchestration. Exam **Nov 4**.
+### Phased Rollout
+
+**MVP - Local Docker Study Platform**
+
+- Single Docker container.
+- Bind-mounted persistent data.
+- FastAPI backend.
+- Basic web dashboard.
+- Objective browser from `EXAM_OBJECTIVES.md`.
+- Local file ingestion for Markdown, text, HTML, and PDFs.
+- ChromaDB RAG.
+- Manual topic investigation trigger.
+- Codex-first investigation provider path.
+- Notes, citations, and quiz generation.
+
+**v1.1 - Research Breadth**
+
+- Web search and web page extraction.
+- YouTube metadata and transcript extraction.
+- GitHub/doc source collection.
+- Source deduplication and resumable investigation passes.
+- Topic gap tracking.
+
+**v1.2 - Study Loop**
+
+- Study chat with citations.
+- Quiz attempts and readiness dashboard.
+- Weak-topic exercise recommendations.
+- User feedback-driven follow-up jobs.
+
+**v2.0 - Multi-Agent Research**
+
+- Provider adapters for Codex, Claude, OpenAI-compatible models, Hermes, and local models.
+- Routing by task type and source size.
+- Agent run comparison and quality scoring.
+- Optional Lavish artifact export from topic pages.
 
 ### Technical Risks
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|-----------|
-| Cloud LLM hallucinates on niche NVIDIA docs | Med | High | Citation grounding + groundedness eval; route hard topics to deepseek-v4-pro; local fallback if needed. |
-| Local fallback quality (7B-class when offline) | Low | Med | Cloud is primary; optionally pull `qwen2.5:14b-instruct` for stronger offline fallback on 16 GB. |
-| Quiz answer keys subtly wrong | Med | High | Schema validation + sampled audit ≥ 95% correctness; rationale + source per item. |
-| Mermaid syntax errors break render | Med | Low | Lint/validate before emit; fallback render. |
-| Web-search rate limits / cost | Med | Med | Provider choice TBD; cache results in vault; budget cap. |
-| PDF parsing quality (tables/figures/scans) | Med | Med | Robust local parser (`pymupdf`/MarkItDown); OCR fallback for scans; flag low-confidence pages for review. |
-| Official objectives coverage | Low | Low | ✅ All 10 domains in `EXAM_OBJECTIVES.md`. Weights sum to 92% (source) — verify before exam. |
 
-### Open Questions (need your input)
-1. ~~Exam objectives~~ — ✅ all 10 domains captured (weights sum to 92% per source doc — flagged for verification).
-2. ~~Exam target date~~ — ✅ **November 4, 2026** (~4.5 months runway from Jun 15).
-3. ~~Web-search provider~~ — ✅ **DuckDuckGo** (free, no key).
-4. ~~Cloud LLM fallback~~ — ✅ **Cloud-first** (DeepSeek + ZAI, strength-routed); local Ollama fallback. MiniMax deferred (owner will configure later).
+| Risk | Likelihood | Impact | Mitigation |
+|---|---:|---:|---|
+| Source collection becomes too broad or slow | High | High | Use bounded investigation batches, resumable jobs, source limits, and unexplored lead queues |
+| Generated material contains unsupported claims | Medium | High | Require citations, groundedness checks, and review flags |
+| YouTube transcripts unavailable or low quality | Medium | Medium | Store metadata, mark transcript unavailable, allow manual transcript upload |
+| PDF extraction loses tables or figures | Medium | Medium | Store page references, preserve raw file, add manual review flags |
+| Single container becomes complex | Medium | Medium | Keep clear module boundaries so services can split later if needed |
+| Data loss through Docker misuse | Low | High | Bind mounts, documented restore test, startup warning when persistent paths are not mounted |
+| Agent provider APIs change or rate-limit | Medium | Medium | Adapter layer, retries, local fallback, provider capability metadata |
+
+### Decisions
+
+1. **Initial investigation provider:** Codex.
+2. **MVP frontend:** React/Vite.
+3. **MVP database:** SQLite stored under the mounted `/app/data` directory.
+4. **Persistence model:** host bind mounts remain mandatory for `./data`, `./vault`, `./inbox`, and `./artifacts`.
+
+### Open Questions
+
+1. What host path should be the default persistent study directory outside the repo?
 
 ---
 
-### Exam Domain Coverage *(official — COMPLETE: 10 domains)*
-> Full structured tracker with sub-objectives + seed readings: see [`EXAM_OBJECTIVES.md`](./EXAM_OBJECTIVES.md). Raw source ingested at `NVIDIA-NCP-AAI-Study/inbox/nvt-study-guide.md`.
-> ⚠️ Official weights sum to **92%** per source doc (15+15+13+5+10+10+7+7+5+5) — flagged for verification.
+## Related Sources
 
-| # | Domain | Weight | Sub-objs | Note | ≥3 Quiz | Last |
-|---|--------|:-----:|:--------:|:----:|:-------:|:----:|
-| 1 | Agent Architecture and Design | 15% | 1.1–1.8 | ☐ | ☐ | — |
-| 2 | Agent Development | 15% | 2.1–2.6 | ☐ | ☐ | — |
-| 3 | Evaluation and Tuning | 13% | 3.1–3.5 | ☐ | ☐ | — |
-| 4 | Deployment and Scaling | 5% | 4.1–4.5 | ☐ | ☐ | — |
-| 5 | Cognition, Planning, and Memory | 10% | 5.1–5.5 | ☐ | ☐ | — |
-| 6 | Knowledge Integration and Data Handling | 10% | 6.1–6.5 | ☐ | ☐ | — |
-| 7 | NVIDIA Platform Implementation | 7% | 7.1–7.5 | ☐ | ☐ | — |
-| 8 | Run, Monitor, and Maintain | 7% | 8.1–8.5 | ☐ | ☐ | — |
-| 9 | Safety, Ethics, and Compliance | 5% | 9.1–9.5 | ☐ | ☐ | — |
-| 10 | Human-AI Interaction and Oversight | 5% | 10.1–10.4 | ☐ | ☐ | — |
-
-**Cross-domain NVIDIA stack to emphasize:** NeMo / Agentic NeMo / NeMo Agent Toolkit / NeMo Guardrails / NeMo RL · NIM (microservices + Agent Blueprints) · Triton Inference Server · TensorRT-LLM · Agent Intelligence Toolkit (AIQ Toolkit) · Data Flywheel · Nsight Systems · DGX Cloud · CUDA/GPU ops.
+- `EXAM_OBJECTIVES.md` - objective tracker and domain source of truth.
+- `SPECS.md` - original Obsidian, RAG, Hermes, OpenCode, and Lavish concept.
+- `README.md` - currently minimal and should be updated once implementation begins.
