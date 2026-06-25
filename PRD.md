@@ -6,7 +6,7 @@
 **Owner:** Solo candidate.
 **Primary UI:** Web app.
 **Deployment target:** Single Docker container with bind-mounted persistent data on disk.
-**MVP decisions:** Codex-first investigation provider, React/Vite frontend, SQLite database.
+**MVP decisions:** Codex as the operator-driven investigation/synthesis provider — the user runs Codex, and the app ingests, validates, indexes, and tracks provenance on Codex's outputs (the app does not invoke Codex headlessly). React/Vite frontend, SQLite database. The models Codex routes to are described in `EXAM_OBJECTIVES.md`.
 
 ---
 
@@ -29,12 +29,24 @@ The app runs inside one Docker container. All user data, source artifacts, vecto
 
 1. **Exam objective coverage:** 100% of objectives in `EXAM_OBJECTIVES.md` have at least one synthesized study note, at least three quiz items, and at least three cited source references.
 2. **Research breadth:** each completed objective includes sources from at least two source categories when available, such as official docs, PDFs, videos, GitHub, or articles.
-3. **Citation grounding:** at least 95% of non-trivial generated claims in study notes map to a stored source citation or local vault reference.
-4. **Question bank:** at least 300 validated exam-style questions with answer, rationale, difficulty, topic mapping, and citation.
-5. **Readiness gate:** user reaches at least 85% average score across the last five quizzes for every weighted domain.
-6. **RAG quality:** retrieval reaches at least 85% Precision@5 on a 50-query held-out benchmark.
+3. **Citation grounding (MVP):** every citation in a study note or quiz item points to a real, stored `source_chunk`, and each generated claim links to the specific chunk it was drawn from so it can be inspected. *(Stretch: verify each claim is semantically supported by its cited span via an LLM-judge / NLI pass — citation existence alone does not prove support.)*
+4. **Question bank (stretch goal):** at least 300 exam-style questions with answer, rationale, difficulty, topic mapping, and citation. "Validated" requires a defined authority — until one exists, treat AI-generated questions as draft material to be spot-checked against official sources, not as a verified bank.
+5. **Readiness gate:** user reaches at least 85% average score across the last five quizzes for every weighted domain. *(Depends on domain weights; resolve the 92%-sum discrepancy in `EXAM_OBJECTIVES.md` before computing readiness — see Open Questions.)*
+6. **RAG quality (stretch goal):** retrieval reaches at least 85% Precision@5 on a 50-query hand-authored benchmark. Building and labeling this benchmark is real effort and is not part of the MVP task list; schedule it explicitly if adopted as a gate.
 7. **Persistence guarantee:** deleting and recreating the Docker container keeps all study data intact when host data mounts are preserved.
 8. **Incremental investigation:** a topic can be resumed across multiple jobs without duplicate sources or lost work.
+
+### Primary Milestone — Time-to-First-Study-Value
+
+The exam is on **2026-11-04**; the real goal is passing it, not finishing the platform. Before
+any of the feature-completeness criteria above, the project must hit one early milestone:
+
+> Ingest the bundled NVIDIA study-guide PDF → chunk → embed → ask a grounded question → receive
+> an answer with a working citation, and produce one synthesized note + quiz for one objective.
+
+This vertical slice can ship through a CLI or a single endpoint, days into the build, before the
+multi-view web app. It de-risks the synthesis engine (provider + grounding) while it is still
+cheap to change, and it is the point at which the system starts saving study time.
 
 ---
 
@@ -59,7 +71,7 @@ Supported source categories:
 - Web articles, standards, papers, and technical documentation.
 - Local Markdown, text, HTML, and existing Obsidian notes.
 - Student-provided documents, papers, URLs, pasted notes, and raw information attached to specific topics.
-- Outputs produced by Codex, Claude, OpenAI models, Hermes, or future investigation agents.
+- Outputs produced by Codex (operator-driven) or future investigation agents, ingested with full provenance.
 
 #### B. Study Web App
 
@@ -116,7 +128,7 @@ As a candidate, I want a browser-based app that guides my study workflow so that
 
 - **AC-4.1:** The dashboard displays coverage and readiness by exam domain and sub-objective.
 - **AC-4.2:** The topic detail page shows notes, citations, source list, quizzes, exercises, and job history.
-- **AC-4.3:** The chat answers questions using RAG and shows citations from stored sources.
+- **AC-4.3:** The chat answers questions using RAG and shows citations from stored sources. *(MVP/early chat is retrieval-first — it returns the most relevant cited passages, since there is no embedded LLM; generative natural-language answers depend on operator-driven Codex or a later programmatic provider. This is a v1.2 capability.)*
 - **AC-4.4:** Quiz attempts are saved with score, timestamp, topic, domain, and missed concepts.
 - **AC-4.5:** The app recommends exercises based on weak topics and recent quiz failures.
 
@@ -143,10 +155,10 @@ As a candidate, I want to add documents, papers, links, notes, and raw informati
 
 **US-7 - Use multiple investigation agents**
 
-As an operator, I want the platform to support Codex, Claude, OpenAI models, Hermes, or other agents so that I can route research to the best available tool.
+As an operator, I want the platform to support multiple investigation agents — Codex first (operator-driven, using its integrated GPT models), and later programmatic providers (e.g. the OpenAI GPT API, Claude, Hermes) — so that I can route research to the best available tool.
 
-- **AC-7.1:** The backend defines a provider adapter interface for investigation agents.
-- **AC-7.2:** The first version may implement one provider, but the interface must support adding others without changing topic, source, or job schemas.
+- **AC-7.1:** The backend defines a provider adapter interface for investigation/synthesis agents, including an output-ingestion path for operator-driven agents like Codex.
+- **AC-7.2:** The MVP implements the Codex output-ingestion path, but the interface must support adding programmatic providers without changing topic, source, or job schemas.
 - **AC-7.3:** Each generated artifact records the provider, model, prompt template version, timestamp, and source inputs.
 
 ### Non-Goals for MVP
@@ -181,12 +193,23 @@ As an operator, I want the platform to support Codex, Claude, OpenAI models, Her
 
 ### Agent Provider Requirements
 
-The MVP uses Codex as the first investigation provider. The platform must not hard-code Codex as the permanent investigation engine; it should provide an adapter boundary for:
+The MVP uses **Codex as the operator-driven investigation/synthesis provider**. The operator runs
+Codex (CLI/IDE) to research a topic and produce structured study material — notes, citations,
+quiz items, and identified gaps. The app does **not** invoke Codex headlessly inside the
+container; instead it provides an **agent-output ingestion path** that accepts Codex's structured
+output, validates it (every citation must resolve to a stored source chunk), indexes it for RAG,
+and records full provenance. This deliberately avoids the cost and fragility of non-interactive
+Codex invocation in Docker, and matches the existing "Outputs produced by Codex" source category.
+Synthesis runs on Codex's integrated GPT models (GPT-XX); no separate model keys are configured
+(see `EXAM_OBJECTIVES.md`).
 
-- Codex for the first repo-aware investigation workflow, source processing, and structured task execution.
-- Claude or OpenAI-compatible APIs for deep synthesis and long-form explanation.
+The platform must not hard-code Codex as the permanent engine; the same adapter boundary supports
+adding programmatic providers later:
+
+- Codex (operator-driven, output ingestion, integrated GPT models) — the MVP path.
+- The OpenAI GPT API for in-app generation when programmatic synthesis is added later.
+- Claude or other hosted APIs for deep synthesis when configured.
 - Hermes for persistent learning memory if configured.
-- Local fallback models when available.
 
 Each provider adapter must expose:
 
@@ -231,7 +254,7 @@ flowchart LR
     SRC --> GH[GitHub/docs]
     SRC --> LOCAL[Local files]
 
-    JOBS --> AGENTS[Agent Provider Adapters<br/>Codex Claude OpenAI Hermes local]
+    JOBS --> AGENTS[Agent Provider Adapters<br/>Codex operator-driven output ingestion GPT-XX · OpenAI GPT API Claude Hermes later]
     AGENTS --> SYN[Synthesis<br/>notes quizzes exercises]
     SYN --> DB
     SYN --> VDB
@@ -264,7 +287,7 @@ Deleting the container must not delete any files in these host directories.
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Local, deterministic, inexpensive |
 | PDF parsing | PyMuPDF first, optional OCR later | Reliable local PDF extraction |
 | YouTube transcripts | transcript API when available | Avoid video downloads and preserve text provenance |
-| Background jobs | In-process queue for MVP | Avoid multi-service complexity |
+| Background jobs | In-process queue on a worker thread (not the request path); SQLite in WAL mode | Synthesis/embedding jobs run for minutes — keep them off the Uvicorn event loop while avoiding multi-service complexity |
 | Docker | One image, bind-mounted data | Matches user requirement |
 
 ### Data Model
@@ -310,7 +333,7 @@ Minimum persistent entities:
 - Local file ingestion for Markdown, text, HTML, and PDFs.
 - ChromaDB RAG.
 - Manual topic investigation trigger.
-- Codex-first investigation provider path.
+- Codex operator-driven output ingestion as the synthesis path.
 - Notes, citations, and quiz generation.
 
 **v1.1 - Research Breadth**
@@ -330,7 +353,7 @@ Minimum persistent entities:
 
 **v2.0 - Multi-Agent Research**
 
-- Provider adapters for Codex, Claude, OpenAI-compatible models, Hermes, and local models.
+- Programmatic provider adapters (OpenAI GPT API, Claude, Hermes) for in-app generation beyond the MVP Codex output-ingestion baseline.
 - Routing by task type and source size.
 - Agent run comparison and quality scoring.
 - Optional Lavish artifact export from topic pages.
@@ -349,7 +372,7 @@ Minimum persistent entities:
 
 ### Decisions
 
-1. **Initial investigation provider:** Codex.
+1. **Initial investigation/synthesis provider:** Codex, operator-driven — the user runs Codex (using its integrated GPT models, GPT-XX) and the app ingests/validates/indexes its outputs (no headless invocation, no separate model keys). Programmatic providers are a later adapter.
 2. **MVP frontend:** React/Vite.
 3. **MVP database:** SQLite stored under the mounted `/app/data` directory.
 4. **Persistence model:** host bind mounts remain mandatory for `./data`, `./vault`, `./inbox`, and `./artifacts`.
@@ -357,6 +380,11 @@ Minimum persistent entities:
 ### Open Questions
 
 1. What host path should be the default persistent study directory outside the repo?
+2. **Domain weights sum to 92%, not 100%** (`EXAM_OBJECTIVES.md` flags this). Verify the weights
+   against the official NVIDIA source and close the 8% gap before implementing the readiness math
+   (SC-5), since the dashboard scores are weight-dependent.
+3. What is the authority for "validated" quiz questions (SC-4)? Without one, the question bank is
+   draft material, not a verified bank.
 
 ---
 

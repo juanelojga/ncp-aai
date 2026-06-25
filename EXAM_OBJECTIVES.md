@@ -171,11 +171,8 @@ NeMo / Agentic NeMo / NeMo Agent Toolkit / NeMo Guardrails / NeMo RL · NIM (mic
 
 ## Decisions
 - **Exam date:** **November 4, 2026** (~4.5 months runway from Jun 15).
-- **Model strategy:** cloud-first, strength-routed; local Ollama fallback.
-  - `deepseek/deepseek-v4-pro` → investigation / multi-source synthesis / quiz generation / evaluation (best reasoning)
-  - `zai/glm-5.1` → structured note authoring / Mermaid / JSON tool-calls / code scaffolding
-  - `deepseek/deepseek-v4-flash` & `zai/glm-5-turbo` → fast ops (routing, classification, streaming)
-  - `MiniMax` → long-context (1M) ingestion + multimodal — **NOT yet configured; key pending**
-  - local `qwen2.5-coder:7b-32k` / `gemma4:e4b-64k` → offline fallback
-  - embeddings: `all-MiniLM-L6-v2` (local)
+- **Model strategy:** synthesis runs through **Codex's integrated GPT models (GPT-XX)**. The
+  operator drives Codex; the app ingests and validates its outputs. No separate cloud LLM keys
+  (DeepSeek / GLM / MiniMax) or local Ollama models are configured for synthesis.
+  - embeddings: `all-MiniLM-L6-v2` (local) — used by the app's RAG indexing, independent of Codex.
 - **Web-search provider:** DuckDuckGo (free, no key) — resolved 2026-06-15.

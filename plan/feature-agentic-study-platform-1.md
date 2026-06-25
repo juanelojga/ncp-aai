@@ -24,8 +24,9 @@ This plan implements the NCP-AAI Agentic Study Platform MVP as a single Dockeriz
 - **REQ-006**: Implement ChromaDB-backed retrieval over normalized source chunks.
 - **REQ-007**: Implement resumable investigation jobs with explicit statuses.
 - **REQ-008**: Generate source-backed notes, citations, quiz questions, and exercises for each topic.
-- **REQ-009**: Implement an agent provider adapter boundary so Codex, Claude, OpenAI-compatible APIs, Hermes, or local models can be added.
-- **REQ-010**: Implement Codex as the initial investigation provider path for MVP.
+- **REQ-009**: Implement an agent provider adapter boundary with an output-ingestion path for operator-driven agents (Codex, using its integrated GPT models) plus a seam for later programmatic providers (OpenAI GPT API, Claude, Hermes).
+- **REQ-010**: Implement Codex as the MVP provider in **operator-driven** mode: the user runs Codex and the app ingests, validates (citations resolve to stored chunks), indexes, and records provenance on Codex's structured outputs. The app does not invoke Codex headlessly inside the container.
+- **REQ-011**: Deliver a study-value vertical slice (PDF ingest → embed → grounded cited answer → ingest one Codex-produced note + quiz for one objective) before building the multi-view web app or the resumable-job state machine.
 - **SEC-001**: Store API keys in `.env` or mounted secret files only.
 - **SEC-002**: Do not commit generated source content, local databases, API keys, Chroma indexes, or user study data.
 - **SEC-003**: Require explicit user confirmation before deleting source records, notes, quiz history, or database state.
@@ -40,104 +41,106 @@ This plan implements the NCP-AAI Agentic Study Platform MVP as a single Dockeriz
 
 ## 2. Implementation Steps
 
-### Implementation Phase 1
+> **Ordering principle (revised):** ship a study-value vertical slice first, then harden and
+> broaden. The exam is on 2026-11-04 — the priority is a system that saves study time within
+> days, not a feature-complete product. The resumable-job state machine and the multi-view React
+> app are deferred until the ingest→embed→grounded-answer→note+quiz loop is proven, because that
+> is where the provider and grounding risks live and where they are cheapest to change. Task IDs
+> are sequential in execution order.
 
-- GOAL-001: Create the project foundation, Docker runtime, persistent storage layout, and application skeleton.
+### Implementation Phase 1 — Study-Value Vertical Slice
 
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-001 | Create `pyproject.toml` with FastAPI, Uvicorn, SQLAlchemy or SQLModel, Alembic optional, ChromaDB, sentence-transformers, PyMuPDF, BeautifulSoup, markdown parsing, pydantic-settings, pytest, and ruff dependencies. | | |
-| TASK-002 | Create `package.json`, `vite.config.ts`, `src/web/package` structure, and React/Vite dependencies for the study web app. | | |
-| TASK-003 | Create `Dockerfile` that installs Python and Node dependencies, builds the React/Vite frontend, exposes port `8000`, creates `/app/data`, `/app/vault`, `/app/inbox`, and `/app/artifacts`, and runs the FastAPI application. | | |
-| TASK-004 | Create `.dockerignore` that excludes `.git`, `.env`, `data`, `vault`, `inbox`, `artifacts`, `chroma_db`, caches, and virtual environments. | | |
-| TASK-005 | Create `.env.example` with `APP_DATA_DIR=/app/data`, `APP_VAULT_DIR=/app/vault`, `APP_INBOX_DIR=/app/inbox`, `APP_ARTIFACT_DIR=/app/artifacts`, `DATABASE_URL=sqlite:////app/data/app.db`, and provider key placeholders. | | |
-| TASK-006 | Create `src/ncp_aai/main.py` with a FastAPI app, health endpoint `GET /health`, API routing, and static serving for the built React/Vite app. | | |
-| TASK-007 | Create `src/ncp_aai/config.py` with pydantic settings for persistent paths, database URL, Chroma path, embedding model, and provider configuration. | | |
-| TASK-008 | Create `scripts/dev_docker_run.sh` documenting the single-container run command with bind mounts from `./data`, `./vault`, `./inbox`, and `./artifacts`. | | |
-
-### Implementation Phase 2
-
-- GOAL-002: Implement persistent database schema and objective import.
+- GOAL-001: Prove the core loop end to end for ONE objective — ingest the bundled study-guide
+  PDF, embed it, answer a grounded question with a working citation, and synthesize one note + one
+  quiz — exposed through a CLI or a single endpoint. Minimal schema subset only; no React, no job
+  state machine.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-009 | Create `src/ncp_aai/db.py` with SQLite engine creation using `DATABASE_URL` and startup table initialization. | | |
-| TASK-010 | Create `src/ncp_aai/models.py` with tables for `Domain`, `Objective`, `Topic`, `InvestigationJob`, `SourceRecord`, `SourceChunk`, `Note`, `Citation`, `QuizQuestion`, `QuizAttempt`, `AgentRun`, and `FeedbackItem`. | | |
-| TASK-011 | Create `src/ncp_aai/objectives.py` that parses `EXAM_OBJECTIVES.md` and imports domains, objectives, weights, and objective IDs idempotently. | | |
+| TASK-001 | Create a minimal `pyproject.toml` (FastAPI, Uvicorn, SQLAlchemy/SQLModel, ChromaDB, sentence-transformers, PyMuPDF, BeautifulSoup, markdown, pydantic-settings, pytest, ruff). No embedded LLM client in the MVP — synthesis is operator-driven via Codex. Defer Node/React tooling to Phase 6 and any programmatic-provider client to a later phase. | | |
+| TASK-002 | Create `src/ncp_aai/config.py` (pydantic settings: persistent paths, `DATABASE_URL`, Chroma path, embedding model, Codex output-ingestion directory) and `.env.example` with `APP_DATA_DIR`, `APP_VAULT_DIR`, `APP_INBOX_DIR`, `APP_ARTIFACT_DIR`, and `DATABASE_URL=sqlite:////app/data/app.db`. Leave commented placeholders for future programmatic-provider keys. | | |
+| TASK-003 | Create `src/ncp_aai/db.py` (SQLite engine from `DATABASE_URL`, WAL mode, startup init) and a **minimal** `src/ncp_aai/models.py` subset: `Domain`, `Objective`, `SourceRecord`, `SourceChunk`, `Note`, `Citation`, `QuizQuestion`. (Remaining tables added in Phase 2.) | | |
+| TASK-004 | Create `src/ncp_aai/objectives.py` parsing `EXAM_OBJECTIVES.md` and importing domains, objectives, weights, and IDs idempotently. | | |
+| TASK-005 | Create `src/ncp_aai/ingestion/readers.py` (Markdown, text, HTML, PDF via PyMuPDF), `normalize.py` (page/section-referenced text), and `chunking.py` (deterministic chunking by heading + token/char window). | | |
+| TASK-006 | Create `src/ncp_aai/rag/embeddings.py` (`sentence-transformers/all-MiniLM-L6-v2`) and `src/ncp_aai/rag/store.py` (ChromaDB persistent client at `/app/data/chroma`). | | |
+| TASK-007 | Create `src/ncp_aai/agents/base.py` (`AgentProvider`, `AgentRequest`, `AgentResponse`, `AgentCapability`, structured errors) and `src/ncp_aai/agents/codex_provider.py` as the MVP **operator-driven** adapter: define the structured Codex output contract (note + citations + quiz JSON/Markdown) and an ingestion entry that parses, validates, and records provenance (`provider=codex`, model, prompt version). | | |
+| TASK-008 | Create `src/ncp_aai/agents/local_stub.py` — a deterministic offline provider that emits Codex-shaped placeholder note/quiz output from retrieved chunks, so the ingestion path and tests run without invoking Codex. | | |
+| TASK-009 | Create `src/ncp_aai/synthesis/notes.py` (persist ingested Codex note to `/app/vault` + metadata, link each claim to the chunk it cites), `citations.py` (reject any citation that does not resolve to a real `SourceChunk`), and `quizzes.py` (validate the strict quiz schema: prompt, four options, correct option, rationale, difficulty, objective ID, citations). | | |
+| TASK-010 | Create a thin entry point that runs the slice end to end: ingest a PDF from `/app/inbox` → chunk/embed → retrieve top-k cited chunks for a query (extractive — no in-app generation in MVP) → ingest one Codex-produced note + quiz for one objective (validated). Expose as a CLI command and/or `POST /api/slice/run`; add `GET /health`. **Milestone gate: this loop works before Phase 2.** | | |
+
+### Implementation Phase 2 — Persistence Foundation & Schema Completion
+
+- GOAL-002: Complete the database schema and the objective/coverage API on top of the proven slice.
+
+| Task | Description | Completed | Date |
+|------|-------------|-----------|------|
+| TASK-011 | Extend `models.py` with the remaining tables: `Topic`, `InvestigationJob`, `QuizAttempt`, `AgentRun`, `ExerciseRecommendation`, `FeedbackItem`, `TopicSource`. | | |
 | TASK-012 | Add API route `POST /admin/import-objectives` to run the objective import. | | |
 | TASK-013 | Add API route `GET /api/objectives` returning domains, objectives, topic status, note count, question count, and latest quiz score. | | |
+| TASK-014 | Add content-hash deduplication so unchanged files do not create duplicate source records, chunks, or vectors. | | |
+| TASK-015 | Add API routes `POST /api/sources/ingest` (ingest a path from `/app/inbox`, create `SourceRecord`/`SourceChunk`, embed, store vectors) and `POST /api/rag/query` (top-k chunks with source IDs, titles, paths, page references, similarity scores). | | |
 
-### Implementation Phase 3
+### Implementation Phase 3 — Investigation Jobs & Provider Adapter Hardening
 
-- GOAL-003: Implement local ingestion and ChromaDB-backed RAG.
-
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-014 | Create `src/ncp_aai/ingestion/readers.py` with readers for Markdown, text, HTML, and PDF files. | | |
-| TASK-015 | Create `src/ncp_aai/ingestion/normalize.py` to convert reader output into normalized text with page or section references. | | |
-| TASK-016 | Create `src/ncp_aai/ingestion/chunking.py` with deterministic chunking by heading and token or character window. | | |
-| TASK-017 | Create `src/ncp_aai/rag/embeddings.py` using `sentence-transformers/all-MiniLM-L6-v2`. | | |
-| TASK-018 | Create `src/ncp_aai/rag/store.py` using ChromaDB persistent client at `/app/data/chroma`. | | |
-| TASK-019 | Create API route `POST /api/sources/ingest` that ingests a path from `/app/inbox`, creates `SourceRecord` and `SourceChunk` rows, embeds chunks, and stores vectors. | | |
-| TASK-020 | Create API route `POST /api/rag/query` that returns top-k chunks with source IDs, titles, paths, page references, and similarity scores. | | |
-| TASK-021 | Add content-hash deduplication so unchanged files do not create duplicate source records or vectors. | | |
-
-### Implementation Phase 4
-
-- GOAL-004: Implement investigation jobs, provider adapter boundary, and the Codex MVP provider path.
+- GOAL-003: Add the resumable-job machinery and broaden provider support — now that there is real
+  synthesis to schedule.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-022 | Create `src/ncp_aai/agents/base.py` with `AgentProvider`, `AgentRequest`, `AgentResponse`, `AgentCapability`, and structured error types. | | |
-| TASK-023 | Create `src/ncp_aai/agents/codex_provider.py` as the MVP provider adapter for invoking Codex-driven investigation runs and recording structured outputs. | | |
-| TASK-024 | Create `src/ncp_aai/agents/local_stub.py` as a deterministic test provider that can synthesize placeholder notes from retrieved chunks for offline tests. | | |
-| TASK-025 | Create `src/ncp_aai/jobs/queue.py` with an in-process job queue and persisted job status transitions. | | |
-| TASK-026 | Create `src/ncp_aai/jobs/investigation.py` that runs RAG-first investigation, records gaps, and calls the selected provider. | | |
-| TASK-027 | Add API route `POST /api/topics/{topic_id}/investigations` to enqueue a bounded investigation pass. | | |
-| TASK-028 | Add API route `GET /api/investigations/{job_id}` returning job status, logs, source counts, gaps, and generated artifacts. | | |
-| TASK-029 | Store every provider call in `AgentRun` with provider name, model, prompt version, input source IDs, output artifact IDs, token metadata when available, and errors. | | |
+| TASK-016 | Create `src/ncp_aai/jobs/queue.py` — an in-process queue running on a **worker thread off the request path**, with persisted job status transitions (`queued`→`collecting_sources`→`extracting`→`synthesizing`→`needs_review`→`complete`/`failed`). | | |
+| TASK-017 | Create `src/ncp_aai/jobs/investigation.py` that runs RAG-first investigation, records gaps and unexplored leads, and ingests the operator's Codex output for a bounded pass (the programmatic-provider call seam is reserved for later). | | |
+| TASK-018 | Add API routes `POST /api/topics/{topic_id}/investigations` (enqueue a bounded pass) and `GET /api/investigations/{job_id}` (status, logs, source counts, gaps, artifacts). | | |
+| TASK-019 | Store every provider call in `AgentRun` with provider name, model, prompt version, input source IDs, output artifact IDs, token metadata when available, and errors. Add a per-run token/cost ceiling guardrail. | | |
 
-### Implementation Phase 5
+### Implementation Phase 4 — Synthesis Outputs Completion
 
-- GOAL-005: Implement synthesis outputs: notes, citations, quizzes, and exercises.
+- GOAL-004: Round out synthesis: exercises, full topic API, and graded quiz attempts.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-030 | Create `src/ncp_aai/synthesis/notes.py` that writes topic notes to `/app/vault` and stores note metadata in the database. | | |
-| TASK-031 | Create `src/ncp_aai/synthesis/citations.py` that validates every citation references an existing `SourceRecord` or `SourceChunk`. | | |
-| TASK-032 | Create `src/ncp_aai/synthesis/quizzes.py` with a strict quiz question schema: prompt, four options, correct option, rationale, difficulty, objective ID, and citations. | | |
-| TASK-033 | Create `src/ncp_aai/synthesis/exercises.py` that generates exercise recommendations from missed quiz concepts and weak objectives. | | |
-| TASK-034 | Add API route `GET /api/topics/{topic_id}` returning topic note, sources, citations, quiz questions, exercises, gaps, and job history. | | |
-| TASK-035 | Add API route `POST /api/quiz-attempts` that grades answers, stores attempts, and updates readiness metrics. | | |
+| TASK-020 | Create `src/ncp_aai/synthesis/exercises.py` generating exercise recommendations from missed quiz concepts and weak objectives. | | |
+| TASK-021 | Add API route `GET /api/topics/{topic_id}` returning note, sources, citations, quiz questions, exercises, gaps, and job history. | | |
+| TASK-022 | Add API route `POST /api/quiz-attempts` that grades answers, stores attempts, and updates readiness metrics. **Confirm domain weights sum correctly before computing readiness (see PRD Open Question on the 92% discrepancy).** | | |
 
-### Implementation Phase 6
+### Implementation Phase 5 — Study Web App (React/Vite)
 
-- GOAL-006: Implement the primary study web app.
+- GOAL-005: Build the multi-view study UI — deferred until the synthesis loop and APIs are proven.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-036 | Create the React/Vite app shell with routing, API client, shared layout, navigation, loading states, and error states. | | |
-| TASK-037 | Create the dashboard view showing domain coverage, readiness scores, active jobs, recent quiz attempts, and weak objectives. | | |
-| TASK-038 | Create the objectives view showing all domains and sub-objectives from `EXAM_OBJECTIVES.md`. | | |
-| TASK-039 | Create the topic detail view showing note content, citations, source list, quiz questions, exercises, and investigation history. | | |
-| TASK-040 | Create the investigation console view with controls to trigger, pause, resume, retry, and inspect jobs. | | |
-| TASK-041 | Create the sources view showing source records, extraction status, chunk count, and provenance metadata. | | |
-| TASK-042 | Create the quiz interaction view with immediate feedback, rationale, citations, and saved attempt results. | | |
-| TASK-043 | Create the settings view showing persistence paths, provider configuration status, embedding model, and app version. | | |
+| TASK-023 | Create `package.json`, `vite.config.ts`, `src/web/` structure, and React/Vite dependencies; build the app shell with routing, API client, shared layout, navigation, and loading/error states. | | |
+| TASK-024 | Update `src/ncp_aai/main.py` to serve the built React/Vite app as static assets alongside the API. | | |
+| TASK-025 | Create the dashboard view (domain coverage, readiness scores, active jobs, recent quiz attempts, weak objectives). | | |
+| TASK-026 | Create the objectives view (all domains and sub-objectives from `EXAM_OBJECTIVES.md`). | | |
+| TASK-027 | Create the topic detail view (note content, citations, source list, quiz questions, exercises, investigation history). | | |
+| TASK-028 | Create the investigation console view (trigger, pause, resume, retry, inspect jobs). | | |
+| TASK-029 | Create the sources view (source records, extraction status, chunk count, provenance metadata). | | |
+| TASK-030 | Create the quiz interaction view (immediate feedback, rationale, citations, saved attempt results). | | |
+| TASK-031 | Create the settings view (persistence paths, provider configuration status, embedding model, app version). | | |
 
-### Implementation Phase 7
+### Implementation Phase 6 — Docker Packaging
+
+- GOAL-006: Package the proven app into the single-container deployment.
+
+| Task | Description | Completed | Date |
+|------|-------------|-----------|------|
+| TASK-032 | Create `Dockerfile` that installs Python and Node dependencies, builds the React/Vite frontend, exposes port `8000`, creates `/app/data`, `/app/vault`, `/app/inbox`, `/app/artifacts`, and runs the FastAPI app. | | |
+| TASK-033 | Create `.dockerignore` excluding `.git`, `.env`, `data`, `vault`, `inbox`, `artifacts`, `chroma_db`, caches, and virtual environments. | | |
+| TASK-034 | Create `scripts/dev_docker_run.sh` documenting the single-container run command with bind mounts from `./data`, `./vault`, `./inbox`, and `./artifacts`. | | |
+
+### Implementation Phase 7 — Validation, Persistence Tests, Documentation
 
 - GOAL-007: Add validation, persistence tests, and documentation.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-044 | Add unit tests for objective import, file readers, chunking, deduplication, citation validation, and quiz grading. | | |
-| TASK-045 | Add integration test for ingesting a sample Markdown file, embedding chunks, and querying RAG. | | |
-| TASK-046 | Add integration test for creating an investigation job and persisting generated note and quiz records. | | |
-| TASK-047 | Add frontend tests for dashboard, objectives, topic detail, and quiz interaction views. | | |
-| TASK-048 | Add Docker smoke test that starts the container with bind mounts and verifies `GET /health`. | | |
-| TASK-049 | Add persistence restore test documentation: create data, remove container, recreate container, verify data remains available. | | |
-| TASK-050 | Update `README.md` with project overview, Docker run command, persistence explanation, development setup, and first-use workflow. | | |
+| TASK-035 | Add unit tests for objective import, file readers, chunking, deduplication, citation validation, and quiz grading. | | |
+| TASK-036 | Add integration test for ingesting a sample Markdown file, embedding chunks, and querying RAG. | | |
+| TASK-037 | Add integration test for creating an investigation job and persisting generated note and quiz records. | | |
+| TASK-038 | Add frontend tests for dashboard, objectives, topic detail, and quiz interaction views. | | |
+| TASK-039 | Add Docker smoke test that starts the container with bind mounts and verifies `GET /health`. | | |
+| TASK-040 | Add persistence restore test documentation: create data, remove container, recreate container, verify data remains available. | | |
+| TASK-041 | Update `README.md` with project overview, Docker run command, persistence explanation, development setup, and first-use workflow. | | |
 
 ## 3. Alternatives
 
@@ -145,8 +148,9 @@ This plan implements the NCP-AAI Agentic Study Platform MVP as a single Dockeriz
 - **ALT-002**: Keep Lavish as the primary UI. Rejected because the user confirmed the web app should replace Lavish as the main study surface.
 - **ALT-003**: Use Postgres in the first single-container version. Deferred because SQLite is simpler for local single-user persistence and can live safely in a bind-mounted directory.
 - **ALT-004**: Start with broad web and YouTube collection before local ingestion. Rejected because local ingestion and RAG must work without network access and form the base for all later research.
-- **ALT-005**: Hard-code one provider such as Codex or Claude. Rejected because the product requires agent/provider flexibility.
-- **ALT-006**: Use FastAPI/Jinja for the MVP frontend. Rejected because the user selected React/Vite for richer study interactions.
+- **ALT-005**: Invoke Codex headlessly/programmatically from inside the container as the MVP engine. Rejected: non-interactive, authenticated Codex invocation in Docker is an unresolved integration cost. Instead Codex runs **operator-driven** (on its integrated GPT models) and the app ingests/validates its outputs — same provider, none of the headless risk. A programmatic OpenAI GPT API provider remains the path for later in-app generation.
+- **ALT-006**: Use FastAPI/Jinja for the MVP frontend. Rejected because the user selected React/Vite for richer study interactions — but the React app is now sequenced **after** the vertical slice (Phase 5), not before it.
+- **ALT-007**: Build full infrastructure (Docker, full schema, React shell) before any study output. Rejected: it delivers zero study value for weeks against a fixed exam date and hides provider/grounding risk until late. Replaced by the vertical-slice-first ordering (Phase 1).
 
 ## 4. Dependencies
 
@@ -163,8 +167,8 @@ This plan implements the NCP-AAI Agentic Study Platform MVP as a single Dockeriz
 - **DEP-011**: Node.js and npm for React/Vite build tooling.
 - **DEP-012**: React.
 - **DEP-013**: Vite.
-- **DEP-014**: Codex CLI or callable Codex integration available to the container runtime.
-- **DEP-015**: Optional provider SDKs for Claude, OpenAI-compatible APIs, Hermes, and local models.
+- **DEP-014**: Codex (CLI/IDE) available to the operator, plus a defined structured-output contract the app can ingest (note + citations + quiz JSON/Markdown). No in-container Codex runtime required.
+- **DEP-015**: Optional later programmatic provider SDKs for the OpenAI GPT API, Claude, and Hermes for in-app generation.
 - **DEP-016**: Optional YouTube transcript library for v1.1.
 
 ## 5. Files
@@ -188,7 +192,7 @@ This plan implements the NCP-AAI Agentic Study Platform MVP as a single Dockeriz
 - **FILE-017**: `src/ncp_aai/rag/embeddings.py` - embedding model wrapper.
 - **FILE-018**: `src/ncp_aai/rag/store.py` - ChromaDB integration.
 - **FILE-019**: `src/ncp_aai/agents/base.py` - provider adapter contract.
-- **FILE-020**: `src/ncp_aai/agents/codex_provider.py` - Codex MVP provider.
+- **FILE-020**: `src/ncp_aai/agents/codex_provider.py` - MVP operator-driven Codex output-ingestion adapter (parse, validate, record provenance).
 - **FILE-021**: `src/ncp_aai/agents/local_stub.py` - deterministic test provider.
 - **FILE-022**: `src/ncp_aai/jobs/queue.py` - in-process job queue.
 - **FILE-023**: `src/ncp_aai/jobs/investigation.py` - investigation workflow.
