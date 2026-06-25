@@ -6,9 +6,12 @@ The goal is to build a single-user web app that can investigate each exam topic 
 
 ## Current Status
 
-This repository is still in the planning/specification stage.
+The first backend implementation is in place. The repository now includes a FastAPI application,
+SQLite persistence, objective import, local document ingestion, deterministic offline retrieval,
+Codex-output ingestion, quiz attempts, feedback, background investigation jobs, Docker packaging,
+and a focused pytest suite.
 
-There is no application code, Docker image, Python package, frontend app, test suite, or build system yet. The current source of truth is the product and implementation documentation:
+The product source of truth remains:
 
 - [`PRD.md`](./PRD.md) - product requirements and architecture.
 - [`plan/feature-agentic-study-platform-1.md`](./plan/feature-agentic-study-platform-1.md) - MVP implementation plan.
@@ -31,6 +34,10 @@ The first implementation is intentionally scoped to a local, single-container se
 | Data persistence | Host bind mounts |
 
 Lavish is no longer the primary study UI. It remains optional later for generated rich artifacts or exports.
+
+The backend declares ChromaDB and sentence-transformers as runtime dependencies. For offline
+development and tests, it falls back to a deterministic SQLite-backed vector store and hash
+embeddings when those optional packages are not installed yet.
 
 ## Product Shape
 
@@ -80,15 +87,66 @@ The container will write persistent data only to mounted host directories:
 
 If the Docker container is removed, these host directories should remain. Deleting these directories deletes the study data.
 
-## Planned Docker Usage
+## Local Development
 
-The Docker runtime is not implemented yet. The intended shape is:
+Install the backend with `uv`:
+
+```bash
+uv sync --extra dev
+```
+
+The default dev install uses the deterministic SQLite/vector fallback. To install the full
+optional ChromaDB, PyMuPDF, SQLModel, and sentence-transformers stack:
+
+```bash
+uv sync --extra dev --extra rag
+```
+
+For local runs outside Docker, use repo-local persistent paths:
+
+```bash
+mkdir -p data vault inbox artifacts
+
+APP_DATA_DIR="$PWD/data" \
+APP_VAULT_DIR="$PWD/vault" \
+APP_INBOX_DIR="$PWD/inbox" \
+APP_ARTIFACT_DIR="$PWD/artifacts" \
+CODEX_OUTPUT_DIR="$PWD/inbox/codex" \
+DATABASE_URL="sqlite:///$PWD/data/app.db" \
+CHROMA_DIR="$PWD/data/chroma" \
+uv run python -m uvicorn ncp_aai.main:app --host 127.0.0.1 --port 8000
+```
+
+Useful commands:
+
+```bash
+uv run ncp-aai init-db
+uv run ncp-aai import-objectives
+uv run ncp-aai ingest ./nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf --objective-id objective-1.1 --topic-id topic-1.1
+uv run ncp-aai query "agent architecture and human agent interaction"
+```
+
+Run validation:
+
+```bash
+uv run ruff check src tests
+uv run pytest -q
+```
+
+## Docker Usage
+
+Build the image:
+
+```bash
+docker build -t ncp-aai .
+```
+
+Then run:
 
 ```bash
 mkdir -p data vault inbox artifacts
 
 docker run --rm -p 8000:8000 \
-  --env-file .env \
   -v "$PWD/data:/app/data" \
   -v "$PWD/vault:/app/vault" \
   -v "$PWD/inbox:/app/inbox" \
@@ -99,23 +157,24 @@ docker run --rm -p 8000:8000 \
 The app should then be available at:
 
 ```text
-http://localhost:8000
+http://localhost:8000/health
 ```
 
-This command is illustrative until the `Dockerfile`, `.env.example`, and app entry point are implemented.
+The helper script `scripts/dev_docker_run.sh` runs the same mount layout.
 
 ## First Implementation Path
 
 The MVP should follow the implementation plan in order:
 
-1. Create the Python and React/Vite project skeleton.
-2. Add the single-container Docker runtime.
-3. Add SQLite persistence and objective import from `EXAM_OBJECTIVES.md`.
-4. Implement local file ingestion and ChromaDB-backed RAG.
-5. Add the Codex provider adapter and investigation job model.
-6. Generate notes, citations, quizzes, and exercises.
-7. Build the React/Vite study web app.
-8. Add tests, Docker smoke checks, persistence restore documentation, and setup docs.
+1. Create the Python backend skeleton. Done.
+2. Add the single-container Docker runtime. Done.
+3. Add SQLite persistence and objective import from `EXAM_OBJECTIVES.md`. Done.
+4. Implement local file ingestion and retrieval. Done for local files with deterministic fallback.
+5. Add the Codex provider adapter and investigation job model. Done for operator-driven ingestion.
+6. Generate notes, citations, quizzes, and exercises. Partially done: ingestion, validation, quiz
+   attempts, feedback, and exercise records exist.
+7. Build the React/Vite study web app. Not started.
+8. Add broader integration, Docker smoke, persistence restore documentation, and setup docs. In progress.
 
 See [`plan/feature-agentic-study-platform-1.md`](./plan/feature-agentic-study-platform-1.md) for the task-level breakdown.
 
@@ -129,6 +188,10 @@ See [`plan/feature-agentic-study-platform-1.md`](./plan/feature-agentic-study-pl
 | `SPECS.md` | Original study engine concept |
 | `nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf` | Local certification study guide source |
 | `skills-lock.json` | Skill/tooling lock metadata |
+| `pyproject.toml` | Python package metadata and tooling |
+| `src/ncp_aai/` | FastAPI backend, ingestion, RAG, jobs, and synthesis modules |
+| `tests/` | Backend test suite |
+| `Dockerfile` | Single-container backend runtime |
 
 ## Development Notes
 

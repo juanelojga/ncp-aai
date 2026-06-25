@@ -9,8 +9,16 @@ build/
 venv/
 env/
 
-# ChromaDB (vector store — regeneratable)
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# ChromaDB / persistent local study data
 chroma_db/
+data/
+vault/
+inbox/
+artifacts/
 
 # Environment
 .env

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ncp-aai"
+version = "0.1.0"
+description = "Local-first NCP-AAI agentic study backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "fastapi>=0.115",
+  "markdown>=3.6",
+  "pydantic-settings>=2.4",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+rag = [
+  "chromadb>=0.5",
+  "pymupdf>=1.24",
+  "sentence-transformers>=3.0",
+  "sqlmodel>=0.0.22",
+]
+dev = [
+  "httpx>=0.27",
+  "pytest>=8.3",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+ncp-aai = "ncp_aai.cli:main"
+
+[tool.fastapi]
+entrypoint = "ncp_aai.main:app"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
