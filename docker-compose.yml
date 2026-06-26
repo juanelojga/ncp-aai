@@ -1,0 +1,35 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_DATA_DIR: /app/data
+      APP_VAULT_DIR: /app/vault
+      APP_INBOX_DIR: /app/inbox
+      APP_ARTIFACT_DIR: /app/artifacts
+      DATABASE_URL: sqlite:////app/data/app.db
+      CHROMA_DIR: /app/data/chroma
+      CODEX_OUTPUT_DIR: /app/inbox/codex
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    volumes:
+      - ./data:/app/data
+      - ./vault:/app/vault
+      - ./inbox:/app/inbox
+      - ./artifacts:/app/artifacts
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

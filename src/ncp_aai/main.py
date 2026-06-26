@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi import Path as ApiPath
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, text
 
@@ -60,6 +61,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="NCP-AAI Study Backend", version=__version__, lifespan=lifespan)
+WEB_DIST_DIR = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 
 class HealthResponse(BaseModel):
@@ -413,6 +415,25 @@ def run_slice(request: SliceRunRequest, settings: SettingsDep) -> dict[str, Any]
 @app.get("/api/provider/codex")
 def codex_provider_info() -> dict[str, Any]:
     return CodexOperatorProvider().info().model_dump()
+
+
+@app.get("/assets/{asset_path:path}", include_in_schema=False)
+def serve_web_asset(asset_path: str) -> FileResponse:
+    asset = (WEB_DIST_DIR / "assets" / asset_path).resolve()
+    assets_dir = (WEB_DIST_DIR / "assets").resolve()
+    if not WEB_DIST_DIR.exists() or assets_dir not in asset.parents or not asset.is_file():
+        raise HTTPException(status_code=404, detail="Web asset not found")
+    return FileResponse(asset)
+
+
+@app.get("/{spa_path:path}", include_in_schema=False)
+def serve_spa(spa_path: str) -> FileResponse:
+    if spa_path == "health" or spa_path.startswith(("api/", "admin/")):
+        raise HTTPException(status_code=404, detail="API route not found")
+    index = WEB_DIST_DIR / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+    return FileResponse(index)
 
 
 def _decode_quiz(row: Any) -> dict[str, Any]:

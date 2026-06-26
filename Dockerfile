@@ -1,3 +1,14 @@
+FROM node:24-slim AS web
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY tsconfig.json vite.config.ts index.html ./
+COPY src/web ./src/web
+
+RUN npm install && npm run build
+
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -21,6 +32,7 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+COPY --from=web /app/src/web/dist ./src/web/dist
 COPY EXAM_OBJECTIVES.md PRD.md SPECS.md ./
 COPY nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf ./
 

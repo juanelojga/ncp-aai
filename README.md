@@ -9,7 +9,7 @@ The goal is to build a single-user web app that can investigate each exam topic 
 The first backend implementation is in place. The repository now includes a FastAPI application,
 SQLite persistence, objective import, local document ingestion, deterministic offline retrieval,
 Codex-output ingestion, quiz attempts, feedback, background investigation jobs, Docker packaging,
-and a focused pytest suite.
+the first React/Vite study web app, and focused backend/frontend test suites.
 
 The product source of truth remains:
 
@@ -87,12 +87,80 @@ The container will write persistent data only to mounted host directories:
 
 If the Docker container is removed, these host directories should remain. Deleting these directories deletes the study data.
 
+## Run With Docker Compose
+
+Docker Compose is the primary local run path. It builds the single-container runtime from
+[`Dockerfile`](./Dockerfile), serves the bundled React app through FastAPI, and persists local
+study data through bind mounts.
+
+Create a local environment file and data directories:
+
+```bash
+cp .env.example .env
+mkdir -p data vault inbox artifacts
+```
+
+Build and start the app:
+
+```bash
+docker compose up --build
+```
+
+The app should then be available at:
+
+```text
+http://localhost:8000/
+http://localhost:8000/health
+```
+
+Useful Compose commands:
+
+```bash
+docker compose config
+docker compose ps
+docker compose logs -f app
+docker compose down
+```
+
+This project uses host bind mounts instead of Docker named volumes. `docker compose down` stops and
+removes the container, but it keeps `./data`, `./vault`, `./inbox`, and `./artifacts`. To reset local
+state, stop Compose and delete those directories:
+
+```bash
+docker compose down
+rm -rf data vault inbox artifacts
+mkdir -p data vault inbox artifacts
+```
+
+Seed the objective database:
+
+```bash
+curl -X POST http://localhost:8000/admin/import-objectives
+```
+
+Run the bundled study slice:
+
+```bash
+curl -X POST http://localhost:8000/api/slice/run \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+For the complete runbook, including inbox ingestion, RAG queries, logs, and troubleshooting, see
+[`docs/RUNNING.md`](./docs/RUNNING.md).
+
 ## Local Development
 
 Install the backend with `uv`:
 
 ```bash
 uv sync --extra dev
+```
+
+Install frontend dependencies:
+
+```bash
+npm install
 ```
 
 The default dev install uses the deterministic SQLite/vector fallback. To install the full
@@ -117,6 +185,14 @@ CHROMA_DIR="$PWD/data/chroma" \
 uv run python -m uvicorn ncp_aai.main:app --host 127.0.0.1 --port 8000
 ```
 
+In another terminal, run the Vite dev server:
+
+```bash
+npm run dev
+```
+
+The frontend dev server proxies `/api`, `/admin`, and `/health` to FastAPI.
+
 Useful commands:
 
 ```bash
@@ -126,14 +202,21 @@ uv run ncp-aai ingest ./nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf --o
 uv run ncp-aai query "agent architecture and human agent interaction"
 ```
 
+Build the production web bundle served by FastAPI:
+
+```bash
+npm run build
+```
+
 Run validation:
 
 ```bash
 uv run ruff check src tests
 uv run pytest -q
+npm run test:web
 ```
 
-## Docker Usage
+## Docker Without Compose
 
 Build the image:
 
@@ -147,6 +230,7 @@ Then run:
 mkdir -p data vault inbox artifacts
 
 docker run --rm -p 8000:8000 \
+  --env-file .env \
   -v "$PWD/data:/app/data" \
   -v "$PWD/vault:/app/vault" \
   -v "$PWD/inbox:/app/inbox" \
@@ -157,6 +241,7 @@ docker run --rm -p 8000:8000 \
 The app should then be available at:
 
 ```text
+http://localhost:8000/
 http://localhost:8000/health
 ```
 
@@ -173,7 +258,7 @@ The MVP should follow the implementation plan in order:
 5. Add the Codex provider adapter and investigation job model. Done for operator-driven ingestion.
 6. Generate notes, citations, quizzes, and exercises. Partially done: ingestion, validation, quiz
    attempts, feedback, and exercise records exist.
-7. Build the React/Vite study web app. Not started.
+7. Build the React/Vite study web app. MVP done.
 8. Add broader integration, Docker smoke, persistence restore documentation, and setup docs. In progress.
 
 See [`plan/feature-agentic-study-platform-1.md`](./plan/feature-agentic-study-platform-1.md) for the task-level breakdown.
@@ -189,7 +274,11 @@ See [`plan/feature-agentic-study-platform-1.md`](./plan/feature-agentic-study-pl
 | `nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf` | Local certification study guide source |
 | `skills-lock.json` | Skill/tooling lock metadata |
 | `pyproject.toml` | Python package metadata and tooling |
+| `package.json` | React/Vite frontend metadata and scripts |
+| `PRODUCT.md` | Product register, users, purpose, anti-references, and design principles |
+| `DESIGN.md` | Visual system, tokens, layout, component, and state guidance |
 | `src/ncp_aai/` | FastAPI backend, ingestion, RAG, jobs, and synthesis modules |
+| `src/web/` | React/Vite study web app |
 | `tests/` | Backend test suite |
 | `Dockerfile` | Single-container backend runtime |
 
