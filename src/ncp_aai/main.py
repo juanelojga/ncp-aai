@@ -16,6 +16,14 @@ from ncp_aai.agents.local_stub import build_stub_codex_output
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import init_db, mapping_to_dict, model_to_dict, session
 from ncp_aai.ingestion.service import ingest_inbox_file, ingest_local_file
+from ncp_aai.jobs.investigation import (
+    AmbiguousTopicError,
+    InvestigationError,
+    create_investigation_job,
+    get_investigation_job,
+    ingest_operator_output_for_job,
+    run_local_investigation,
+)
 from ncp_aai.jobs.queue import InvestigationWorker
 from ncp_aai.models import (
     AppSetting,
@@ -89,6 +97,8 @@ class RagQueryRequest(BaseModel):
 class InvestigationRequest(BaseModel):
     query: str | None = None
     codex_output: dict[str, Any] | None = None
+    k: int = Field(default=5, ge=1, le=25)
+    auto_ingest: bool = True
 
 
 class QuizAttemptRequest(BaseModel):
@@ -246,23 +256,31 @@ def start_investigation(
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Unknown topic_id: {topic_id}")
     query = request.query or topic.title
-    if worker is None:
-        raise HTTPException(status_code=503, detail="Investigation worker is not running")
-    job_id = worker.enqueue(topic_id=topic_id, query=query, codex_output=request.codex_output)
-    return {"job_id": job_id, "status": "queued"}
+    try:
+        if request.codex_output:
+            job_id = create_investigation_job(topic_id=topic_id, query=query, settings=settings)
+            ingest_operator_output_for_job(job_id, request.codex_output, settings)
+            return {"job_id": job_id, "status": "complete"}
+        result = run_local_investigation(
+            topic_id,
+            query=query,
+            k=request.k,
+            auto_ingest=request.auto_ingest,
+            settings=settings,
+        )
+        return {"job_id": result["job_id"], "status": result["status"]}
+    except AmbiguousTopicError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvestigationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/investigations/{job_id}")
 def get_investigation(job_id: Annotated[str, ApiPath()], settings: SettingsDep) -> dict[str, Any]:
-    with session(settings) as db:
-        row = db.get(InvestigationJob, job_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Unknown job_id: {job_id}")
-    job = model_to_dict(row)
-    job["logs"] = json.loads(job.pop("logs_json"))
-    job["gaps"] = json.loads(job.pop("gaps_json"))
-    job["artifact_ids"] = json.loads(job.pop("artifact_ids_json"))
-    return job
+    try:
+        return get_investigation_job(job_id, settings)
+    except InvestigationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/topics/{topic_id}")

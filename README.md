@@ -109,9 +109,12 @@ docker compose up --build
 The app should then be available at:
 
 ```text
-http://localhost:8000/
-http://localhost:8000/health
+http://localhost:48673/
+http://localhost:48673/health
 ```
+
+Set `APP_HOST_PORT` to override the Docker host port, for example
+`APP_HOST_PORT=49157 docker compose up --build`.
 
 Useful Compose commands:
 
@@ -135,13 +138,13 @@ mkdir -p data vault inbox artifacts
 Seed the objective database:
 
 ```bash
-curl -X POST http://localhost:8000/admin/import-objectives
+curl -X POST http://localhost:48673/admin/import-objectives
 ```
 
 Run the bundled study slice:
 
 ```bash
-curl -X POST http://localhost:8000/api/slice/run \
+curl -X POST http://localhost:48673/api/slice/run \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -193,13 +196,27 @@ npm run dev
 
 The frontend dev server proxies `/api`, `/admin`, and `/health` to FastAPI.
 
-Useful commands:
+Useful host commands for local development outside Docker:
 
 ```bash
 uv run ncp-aai init-db
 uv run ncp-aai import-objectives
 uv run ncp-aai ingest ./nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf --objective-id objective-1.1 --topic-id topic-1.1
 uv run ncp-aai query "agent architecture and human agent interaction"
+uv run ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
+```
+
+`investigate` resolves a topic ID or objective title, imports objectives if needed, auto-ingests
+the bundled study guide when the topic has no indexed sources, retrieves local context, and writes a
+grounded note plus quiz to the configured vault. The current provider is the deterministic local
+stub, so it is useful for creating study material now but should still be replaced or reviewed with a
+real agent/Codex synthesis pass for final-quality notes.
+
+If the app is running with Docker Compose, run CLI commands inside the container so they use the same
+mounted `data`, `vault`, `inbox`, and `artifacts` directories as the web app:
+
+```bash
+docker compose exec app ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
 ```
 
 Build the production web bundle served by FastAPI:
@@ -229,7 +246,7 @@ Then run:
 ```bash
 mkdir -p data vault inbox artifacts
 
-docker run --rm -p 8000:8000 \
+docker run --rm -p 48673:8000 \
   --env-file .env \
   -v "$PWD/data:/app/data" \
   -v "$PWD/vault:/app/vault" \
@@ -241,8 +258,8 @@ docker run --rm -p 8000:8000 \
 The app should then be available at:
 
 ```text
-http://localhost:8000/
-http://localhost:8000/health
+http://localhost:48673/
+http://localhost:48673/health
 ```
 
 The helper script `scripts/dev_docker_run.sh` runs the same mount layout.

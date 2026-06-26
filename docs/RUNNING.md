@@ -26,14 +26,17 @@ docker compose up --build
 Open the study app:
 
 ```text
-http://localhost:8000/
+http://localhost:48673/
 ```
 
 Check health:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:48673/health
 ```
+
+Compose publishes the container's internal port `8000` on host port `48673` by default. To use a
+different host port, run `APP_HOST_PORT=49157 docker compose up --build`.
 
 The first build can be slow because the image installs Python, RAG, and frontend dependencies.
 
@@ -61,17 +64,17 @@ mkdir -p data vault inbox artifacts
 Import the bundled exam objectives into SQLite:
 
 ```bash
-curl -X POST http://localhost:8000/admin/import-objectives
+curl -X POST http://localhost:48673/admin/import-objectives
 ```
 
-After importing, refresh `http://localhost:8000/` to see the objective tree.
+After importing, refresh `http://localhost:48673/` to see the objective tree.
 
 ## Run The Bundled Study Slice
 
 The slice endpoint imports objectives, ingests the bundled study guide PDF, queries the local RAG store, and ingests deterministic Codex-style output for the default objective/topic.
 
 ```bash
-curl -X POST http://localhost:8000/api/slice/run \
+curl -X POST http://localhost:48673/api/slice/run \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -79,7 +82,7 @@ curl -X POST http://localhost:8000/api/slice/run \
 To target a different objective or topic:
 
 ```bash
-curl -X POST http://localhost:8000/api/slice/run \
+curl -X POST http://localhost:48673/api/slice/run \
   -H "Content-Type: application/json" \
   -d '{"objective_id":"objective-1.1","topic_id":"topic-1.1","query":"agent architecture and human agent interaction"}'
 ```
@@ -95,7 +98,7 @@ cp ./nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf ./inbox/study-guide.pd
 Ingest by relative inbox path:
 
 ```bash
-curl -X POST http://localhost:8000/api/sources/ingest \
+curl -X POST http://localhost:48673/api/sources/ingest \
   -H "Content-Type: application/json" \
   -d '{"path":"study-guide.pdf","source_type":"study_guide_pdf","objective_ids":["objective-1.1"],"topic_ids":["topic-1.1"]}'
 ```
@@ -103,9 +106,34 @@ curl -X POST http://localhost:8000/api/sources/ingest \
 Query the RAG store:
 
 ```bash
-curl -X POST http://localhost:8000/api/rag/query \
+curl -X POST http://localhost:48673/api/rag/query \
   -H "Content-Type: application/json" \
   -d '{"query":"agent architecture and human agent interaction","objective_id":"objective-1.1","k":5}'
+```
+
+Run a local investigation. If the app is running through Docker Compose, run the command inside the
+container so it uses the same mounted database, vector store, inbox, and vault as the web app:
+
+```bash
+docker compose exec app ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
+```
+
+The command accepts either a topic ID such as `topic-1.1` or an imported objective title. It
+auto-ingests the bundled study guide for the resolved topic when no indexed chunks exist, then
+returns JSON containing the completed job ID, note ID, quiz IDs, vault path, logs, and gaps.
+
+Use the host form only when running the backend directly with the local development environment
+variables shown below:
+
+```bash
+APP_DATA_DIR="$PWD/data" \
+APP_VAULT_DIR="$PWD/vault" \
+APP_INBOX_DIR="$PWD/inbox" \
+APP_ARTIFACT_DIR="$PWD/artifacts" \
+CODEX_OUTPUT_DIR="$PWD/inbox/codex" \
+DATABASE_URL="sqlite:///$PWD/data/app.db" \
+CHROMA_DIR="$PWD/data/chroma" \
+uv run ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
 ```
 
 ## Inspect And Operate
@@ -162,7 +190,9 @@ The Vite dev server proxies `/api`, `/admin`, and `/health` to FastAPI.
 
 ## Troubleshooting
 
-Port conflict: if port 8000 is already in use, change the left side of `ports` in `docker-compose.yml`, for example `"8001:8000"`, then open `http://localhost:8001/`.
+Port conflict: Compose defaults to uncommon host port `48673`. If that is already in use, set
+`APP_HOST_PORT` to another host port, for example
+`APP_HOST_PORT=49157 docker compose up --build`, then open `http://localhost:49157/`.
 
 Stale `.env`: Compose reads `.env` when present. If health shows unexpected paths, compare `.env` with `.env.example` and keep container paths as `/app/...` for Compose.
 

@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "${APP_HOST_PORT:-48673}:8000"
     env_file:
       - path: .env
         required: false

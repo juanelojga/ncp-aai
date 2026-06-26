@@ -1,19 +1,17 @@
-import json
 import queue
 import threading
-import uuid
 from typing import Any
 
-from sqlalchemy import text, update
+from sqlalchemy import select
 
-from ncp_aai.agents.codex_provider import CodexOutputInput
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import session
+from ncp_aai.jobs.investigation import (
+    create_investigation_job,
+    ingest_operator_output_for_job,
+    run_local_investigation,
+)
 from ncp_aai.models import InvestigationJob
-from ncp_aai.rag.store import RagStore
-from ncp_aai.synthesis.notes import ingest_codex_output
-
-TERMINAL_STATUSES = {"complete", "failed", "needs_review"}
 
 
 class InvestigationWorker:
@@ -44,17 +42,7 @@ class InvestigationWorker:
         query: str,
         codex_output: dict[str, Any] | None = None,
     ) -> str:
-        job_id = f"job-{uuid.uuid4().hex}"
-        with session(self.settings) as db:
-            db.add(
-                InvestigationJob(
-                    id=job_id,
-                    topic_id=topic_id,
-                    status="queued",
-                    query=query,
-                    logs_json=json.dumps(["Queued investigation job."]),
-                )
-            )
+        job_id = create_investigation_job(topic_id=topic_id, query=query, settings=self.settings)
         self._payloads[job_id] = {"query": query, "codex_output": codex_output}
         self._queue.put(job_id)
         return job_id
@@ -70,105 +58,27 @@ class InvestigationWorker:
             try:
                 self._process(job_id, self._payloads.pop(job_id, {}))
             except Exception as exc:
-                _update_job(
-                    job_id,
-                    self.settings,
-                    status="failed",
-                    error=str(exc),
-                    log=f"Job failed: {exc}",
-                    complete=True,
-                )
+                # Shared investigation helpers already mark failed jobs before re-raising.
+                print(f"Investigation job {job_id} failed: {exc}")
 
     def _process(self, job_id: str, payload: dict[str, Any]) -> None:
-        with session(self.settings) as db:
-            job = db.get(InvestigationJob, job_id)
-        if job is None:
+        topic_id = self._topic_id_for_job(job_id)
+        if topic_id is None:
             return
-
-        query = payload.get("query") or job.query or ""
-        _update_job(job_id, self.settings, status="collecting_sources", log="Querying local RAG.")
-        results = RagStore(self.settings).query(query, k=5, topic_id=job.topic_id)
-        _update_job(
-            job_id,
-            self.settings,
-            status="extracting",
-            log=f"Retrieved {len(results)} local chunks.",
-        )
-        _update_job(job_id, self.settings, status="synthesizing", log="Checking operator output.")
 
         if payload.get("codex_output"):
-            codex_payload = CodexOutputInput.model_validate(payload["codex_output"])
-            result = ingest_codex_output(codex_payload, self.settings)
-            _update_job(
-                job_id,
-                self.settings,
-                status="complete",
-                log="Validated and persisted operator-provided Codex output.",
-                artifacts=[result["note_id"], *result["quiz_question_ids"]],
-                complete=True,
-            )
+            ingest_operator_output_for_job(job_id, payload["codex_output"], self.settings)
             return
 
-        _update_job(
-            job_id,
-            self.settings,
-            status="needs_review",
-            log="Local retrieval complete; submit Codex output to finish synthesis.",
-            gaps=["Operator Codex output is required for synthesized notes/quizzes."],
-            complete=True,
+        run_local_investigation(
+            topic_id,
+            query=payload.get("query"),
+            settings=self.settings,
+            job_id=job_id,
         )
 
-
-def _update_job(
-    job_id: str,
-    settings: Settings,
-    *,
-    status: str,
-    log: str | None = None,
-    gaps: list[str] | None = None,
-    artifacts: list[str] | None = None,
-    error: str | None = None,
-    complete: bool = False,
-) -> None:
-    with session(settings) as db:
-        job = db.get(InvestigationJob, job_id)
-        if job is None:
-            return
-        logs = json.loads(job.logs_json)
-        if log:
-            logs.append(log)
-        current_gaps = json.loads(job.gaps_json)
-        if gaps:
-            current_gaps.extend(gaps)
-        current_artifacts = json.loads(job.artifact_ids_json)
-        if artifacts:
-            current_artifacts.extend(artifacts)
-
-        if complete:
-            db.execute(
-                update(InvestigationJob)
-                .where(InvestigationJob.id == job_id)
-                .values(
-                    status=status,
-                    logs_json=json.dumps(logs),
-                    gaps_json=json.dumps(current_gaps),
-                    artifact_ids_json=json.dumps(current_artifacts),
-                    error=error,
-                    updated_at=text("CURRENT_TIMESTAMP"),
-                    completed_at=text("CURRENT_TIMESTAMP"),
-                )
-            )
-        else:
-            db.execute(
-                update(InvestigationJob)
-                .where(InvestigationJob.id == job_id)
-                .values(
-                    status=status,
-                    logs_json=json.dumps(logs),
-                    gaps_json=json.dumps(current_gaps),
-                    artifact_ids_json=json.dumps(current_artifacts),
-                    error=error,
-                    updated_at=text("CURRENT_TIMESTAMP"),
-                    started_at=text("COALESCE(started_at, CURRENT_TIMESTAMP)"),
-                )
+    def _topic_id_for_job(self, job_id: str) -> str | None:
+        with session(self.settings) as db:
+            return db.scalar(
+                select(InvestigationJob.topic_id).where(InvestigationJob.id == job_id)
             )

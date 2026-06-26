@@ -3,7 +3,9 @@ set -euo pipefail
 
 mkdir -p data vault inbox artifacts
 
-docker run --rm -p 8000:8000 \
+APP_HOST_PORT="${APP_HOST_PORT:-48673}"
+
+docker run --rm -p "$APP_HOST_PORT:8000" \
   --env-file .env \
   -v "$PWD/data:/app/data" \
   -v "$PWD/vault:/app/vault" \
