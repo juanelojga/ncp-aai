@@ -66,11 +66,25 @@ const topicPayload = {
     {
       id: "note-1",
       title: "Control loop notes",
-      body: "Agents combine planning, tools, memory, and feedback loops.",
+      body: "## Agent loops\n\nAgents combine planning, tools, memory, and feedback loops.\n\n- Keep state visible",
       provider: "codex",
       model: "gpt-integrated",
       vault_path: "Agent architecture.md",
       created_at: "2026-01-01",
+      citations: [
+        {
+          id: "citation-1",
+          source_chunk_id: "chunk-1",
+          label: "Study guide excerpt",
+          quote: "Agents combine planning, tools, memory, and feedback loops.",
+          page_start: 3,
+          page_end: 3,
+          section: "Agent loops",
+          source_title: "Study guide",
+          source_path: "guide.md",
+          source_url: null,
+        },
+      ],
     },
   ],
   sources: [
@@ -107,7 +121,7 @@ const topicPayload = {
     },
   ],
   feedback: [{ id: "feedback-1", body: "Clarify memory types.", create_followup_job: 0, followup_job_id: null, created_at: "2026-01-01" }],
-  jobs: [{ id: "job-1", topic_id: "topic-1.1", status: "completed", query: "agent loops", logs: ["done"], gaps: [], artifact_ids: [], error: null, created_at: "2026-01-01", updated_at: "2026-01-01", started_at: null, completed_at: null }],
+  latest_job: null,
 };
 
 function json(data: unknown, init?: ResponseInit) {
@@ -133,6 +147,9 @@ beforeEach(() => {
     if (url === "/api/quiz-attempts") {
       return json({ id: "attempt-1", quiz_question_id: "quiz-1", selected_option: 0, is_correct: true, score: 1, missed_concepts: [], rationale: "The loop coordinates planning, actions, and observations.", created_at: "2026-01-01" });
     }
+    if (url === "/api/topics/topic-1.1/investigations") {
+      return json({ job_id: "job-host", status: "needs_review" });
+    }
     return json({ detail: "Not found" }, { status: 404 });
   });
 });
@@ -152,15 +169,74 @@ describe("NCP-AAI frontend", () => {
     expect(screen.getByText("2 sources")).toBeInTheDocument();
   });
 
-  it("renders topic notes, sources, quiz, exercises, feedback, jobs, and empty states", async () => {
+  it("renders the latest topic note as the primary surface with the right rail", async () => {
     render(<App initialEntries={["/topics/topic-1.1"]} />);
 
     expect(await screen.findByText("Control loop notes")).toBeInTheDocument();
+    expect(screen.getByText("Agent loops")).toBeInTheDocument();
+    expect(screen.getByText("Keep state visible")).toBeInTheDocument();
+    expect(screen.getByText("Study guide excerpt")).toBeInTheDocument();
     expect(screen.getByText("Study guide")).toBeInTheDocument();
     expect(screen.getByText("What does an agent loop coordinate?")).toBeInTheDocument();
     expect(screen.getByText("Trace a workflow")).toBeInTheDocument();
     expect(screen.getByText("Clarify memory types.")).toBeInTheDocument();
-    expect(screen.getByText("agent loops")).toBeInTheDocument();
+    expect(screen.queryByText("Job history")).not.toBeInTheDocument();
+  });
+
+  it("starts note regeneration from the topic page and shows host bridge status", async () => {
+    const user = userEvent.setup();
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    await user.click(await screen.findByRole("button", { name: /regenerate note/i }));
+
+    expect(await screen.findByText(/Host Codex bridge is waiting/)).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/topics/topic-1.1/investigations",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ mode: "host_codex" }),
+      }),
+    );
+  });
+
+  it("shows the host bridge waiting notice on reload from a pending job", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/objectives") return json(objectivesPayload);
+      if (url === "/api/topics/topic-1.1") {
+        return json({ ...topicPayload, latest_job: { id: "job-host", status: "needs_review" } });
+      }
+      if (url === "/health") return json({ status: "ok", version: "0.1.0", database: { status: "ok", path: "/data/app.db" }, vector_store: { status: "ok", backend: "sqlite", path: "/data/chroma" }, paths: {} });
+      return json({ detail: "Not found" }, { status: 404 });
+    });
+
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    expect(await screen.findByText(/Host Codex bridge is waiting/)).toBeInTheDocument();
+  });
+
+  it("switches between note versions with the version selector", async () => {
+    const twoNotePayload = {
+      ...topicPayload,
+      notes: [
+        { ...topicPayload.notes[0], id: "note-2", title: "Latest revision", body: "## Latest\n\nNewest synthesis.", created_at: "2026-02-01", citations: [] },
+        { ...topicPayload.notes[0], id: "note-1", title: "Control loop notes", body: "## Older\n\nFirst synthesis.", created_at: "2026-01-01", citations: [] },
+      ],
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/objectives") return json(objectivesPayload);
+      if (url === "/api/topics/topic-1.1") return json(twoNotePayload);
+      if (url === "/health") return json({ status: "ok", version: "0.1.0", database: { status: "ok", path: "/data/app.db" }, vector_store: { status: "ok", backend: "sqlite", path: "/data/chroma" }, paths: {} });
+      return json({ detail: "Not found" }, { status: 404 });
+    });
+
+    const user = userEvent.setup();
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    expect(await screen.findByText("Newest synthesis.")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox"), "note-1");
+    expect(await screen.findByText("First synthesis.")).toBeInTheDocument();
   });
 
   it("submits a RAG query and renders cited chunks", async () => {

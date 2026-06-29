@@ -2,17 +2,21 @@ import json
 import sys
 
 import pytest
+from sqlalchemy import select
 
+from ncp_aai.cli import _run_codex_worker
 from ncp_aai.cli import main as cli_main
 from ncp_aai.db import session
 from ncp_aai.ingestion.service import ingest_inbox_file, ingest_local_file
 from ncp_aai.jobs import investigation as investigation_module
 from ncp_aai.jobs.investigation import (
     SourceUnavailableError,
+    ingest_codex_payload_for_job,
     resolve_topic,
+    run_host_codex_investigation,
     run_local_investigation,
 )
-from ncp_aai.models import InvestigationJob, Note, QuizQuestion
+from ncp_aai.models import InvestigationJob, Note, QuizQuestion, SourceChunk
 from ncp_aai.objectives import import_objectives
 
 
@@ -104,6 +108,112 @@ def test_local_investigation_auto_ingests_when_sources_are_missing(
     assert result["status"] == "complete"
     assert result["ingest"]["chunk_count"] >= 1
     assert result["artifact_ids"]
+
+
+def test_host_codex_investigation_writes_request_and_needs_review(app_settings):
+    _seed_ui_source(app_settings)
+
+    result = run_host_codex_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+
+    assert result["status"] == "needs_review"
+    request_path = app_settings.codex_output_dir / "requests" / f"{result['job_id']}.json"
+    assert request_path.exists()
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert request["topic_id"] == "topic-1.1"
+    assert request["objective_id"] == "objective-1.1"
+    assert len(request["retrieved_chunks"]) >= 1
+    assert request["retrieved_chunks"][0]["source_chunk_id"]
+
+
+def test_host_codex_response_ingests_new_note_version(app_settings):
+    _seed_ui_source(app_settings)
+    first = run_local_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+    host = run_host_codex_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+    with session(app_settings) as db:
+        chunk_id = db.scalars(select(SourceChunk.id)).first()
+
+    payload = {
+        "provider_metadata": {"provider": "codex", "model": "gpt-host", "run_id": "run-host"},
+        "objective_id": "objective-1.1",
+        "topic_id": "topic-1.1",
+        "title": "Host Codex Study Note",
+        "note_body": "## Host synthesis\n\nHuman-agent interfaces expose status and feedback.",
+        "citations": [
+            {
+                "source_chunk_id": chunk_id,
+                "label": "Local chunk",
+                "quote": "Human-agent interfaces should show agent state",
+            }
+        ],
+        "quiz_items": [
+            {
+                "prompt": "What should human-agent interfaces expose?",
+                "options": ["Agent state", "Only color", "Hidden tools", "No feedback"],
+                "correct_option": 0,
+                "rationale": "The cited source emphasizes visible state and feedback.",
+                "difficulty": "easy",
+                "concept": "Human-agent interaction",
+                "citations": [{"source_chunk_id": chunk_id}],
+            }
+        ],
+        "gaps": [],
+    }
+    response_path = app_settings.codex_output_dir / "responses" / f"{host['job_id']}.json"
+    response_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = ingest_codex_payload_for_job(
+        host["job_id"],
+        investigation_module.load_codex_response(host["job_id"], app_settings),
+        app_settings,
+    )
+
+    assert result["note_id"] != first["note_id"]
+    with session(app_settings) as db:
+        notes = db.scalars(select(Note.id)).all()
+        job = db.get(InvestigationJob, host["job_id"])
+    assert first["note_id"] in notes
+    assert result["note_id"] in notes
+    assert job.status == "complete"
+
+
+def test_codex_worker_survives_a_bad_response(app_settings):
+    _seed_ui_source(app_settings)
+    bad = run_host_codex_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+    good = run_host_codex_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+    with session(app_settings) as db:
+        chunk_id = db.scalars(select(SourceChunk.id)).first()
+
+    responses_dir = app_settings.codex_output_dir / "responses"
+    # Malformed JSON for the first job must not stop the worker from finishing the second.
+    (responses_dir / f"{bad['job_id']}.json").write_text("{not valid json", encoding="utf-8")
+    (responses_dir / f"{good['job_id']}.json").write_text(
+        json.dumps(
+            {
+                "provider_metadata": {
+                    "provider": "codex",
+                    "model": "gpt-host",
+                    "run_id": "run-good",
+                },
+                "objective_id": "objective-1.1",
+                "topic_id": "topic-1.1",
+                "title": "Good Host Note",
+                "note_body": "## Synthesis\n\nHuman-agent interfaces expose status and feedback.",
+                "citations": [{"source_chunk_id": chunk_id, "label": "Local chunk"}],
+                "quiz_items": [],
+                "gaps": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _run_codex_worker(once=True, poll_seconds=0.0, codex_binary="codex")
+
+    with session(app_settings) as db:
+        bad_job = db.get(InvestigationJob, bad["job_id"])
+        good_job = db.get(InvestigationJob, good["job_id"])
+    assert bad_job.status == "failed"
+    assert bad_job.error
+    assert good_job.status == "complete"
 
 
 def test_cli_investigate_prints_json_result(app_settings, monkeypatch, capsys):

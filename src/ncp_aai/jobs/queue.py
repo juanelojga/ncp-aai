@@ -9,6 +9,7 @@ from ncp_aai.db import session
 from ncp_aai.jobs.investigation import (
     create_investigation_job,
     ingest_operator_output_for_job,
+    run_host_codex_investigation,
     run_local_investigation,
 )
 from ncp_aai.models import InvestigationJob
@@ -41,9 +42,10 @@ class InvestigationWorker:
         topic_id: str | None,
         query: str,
         codex_output: dict[str, Any] | None = None,
+        mode: str = "host_codex",
     ) -> str:
         job_id = create_investigation_job(topic_id=topic_id, query=query, settings=self.settings)
-        self._payloads[job_id] = {"query": query, "codex_output": codex_output}
+        self._payloads[job_id] = {"query": query, "codex_output": codex_output, "mode": mode}
         self._queue.put(job_id)
         return job_id
 
@@ -70,7 +72,16 @@ class InvestigationWorker:
             ingest_operator_output_for_job(job_id, payload["codex_output"], self.settings)
             return
 
-        run_local_investigation(
+        if payload.get("mode") == "local_stub":
+            run_local_investigation(
+                topic_id,
+                query=payload.get("query"),
+                settings=self.settings,
+                job_id=job_id,
+            )
+            return
+
+        run_host_codex_investigation(
             topic_id,
             query=payload.get("query"),
             settings=self.settings,

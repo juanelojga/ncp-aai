@@ -1,15 +1,27 @@
 import argparse
 import json
+import sys
+import time
 from pathlib import Path
 
-from ncp_aai.config import get_settings
-from ncp_aai.db import init_db
+from ncp_aai.agents.codex_bridge import (
+    codex_response_path,
+    ensure_bridge_directories,
+    load_codex_response,
+    request_dir,
+    run_codex_for_request,
+)
+from ncp_aai.config import Settings, get_settings
+from ncp_aai.db import init_db, session
 from ncp_aai.ingestion.service import ingest_local_file
 from ncp_aai.jobs.investigation import (
     AmbiguousTopicError,
     InvestigationError,
+    _update_job,
+    ingest_codex_payload_for_job,
     run_local_investigation,
 )
+from ncp_aai.models import InvestigationJob
 from ncp_aai.objectives import import_objectives
 from ncp_aai.rag.store import RagStore
 
@@ -36,6 +48,11 @@ def main() -> None:
     investigate_parser.add_argument("--k", type=int, default=5)
     investigate_parser.add_argument("--no-auto-ingest", action="store_true")
     investigate_parser.add_argument("--json", action="store_true")
+
+    codex_worker_parser = subparsers.add_parser("codex-worker")
+    codex_worker_parser.add_argument("--once", action="store_true")
+    codex_worker_parser.add_argument("--poll-seconds", type=float, default=2.0)
+    codex_worker_parser.add_argument("--codex-binary", default="codex")
 
     args = parser.parse_args()
     settings = get_settings()
@@ -77,3 +94,87 @@ def main() -> None:
             parser.exit(2, json.dumps({"error": str(exc), "candidates": exc.candidates}) + "\n")
         except InvestigationError as exc:
             parser.exit(1, json.dumps({"error": str(exc)}) + "\n")
+    elif args.command == "codex-worker":
+        _run_codex_worker(
+            once=args.once,
+            poll_seconds=args.poll_seconds,
+            codex_binary=args.codex_binary,
+        )
+
+
+def _run_codex_worker(*, once: bool, poll_seconds: float, codex_binary: str) -> None:
+    settings = get_settings()
+    ensure_bridge_directories(settings)
+    processed: set[Path] = set()
+    while True:
+        handled = False
+        for request_path in sorted(request_dir(settings).glob("*.json")):
+            if request_path in processed:
+                continue
+            job_id = request_path.stem
+            if _job_is_complete(job_id, settings):
+                processed.add(request_path)
+                continue
+            try:
+                _process_codex_request(request_path, job_id, settings, codex_binary)
+            except Exception as exc:  # noqa: BLE001 - one bad job must not stop the loop
+                processed.add(request_path)
+                _update_job(
+                    job_id,
+                    settings,
+                    status="failed",
+                    error=str(exc),
+                    log=f"Codex worker failed to process request: {exc}",
+                    complete=True,
+                )
+                print(
+                    json.dumps(
+                        {"job_id": job_id, "request_path": str(request_path), "error": str(exc)}
+                    ),
+                    file=sys.stderr,
+                )
+                continue
+            processed.add(request_path)
+            handled = True
+        if once:
+            return
+        if not handled:
+            time.sleep(poll_seconds)
+
+
+def _process_codex_request(
+    request_path: Path,
+    job_id: str,
+    settings: Settings,
+    codex_binary: str,
+) -> None:
+    response_path = codex_response_path(job_id, settings)
+    if not response_path.exists():
+        response_path = run_codex_for_request(
+            request_path,
+            settings=settings,
+            codex_binary=codex_binary,
+        )
+    payload = load_codex_response(job_id, settings)
+    if payload is None:
+        raise FileNotFoundError(f"No Codex response found at {response_path}")
+    result = ingest_codex_payload_for_job(job_id, payload, settings)
+    print(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "request_path": str(request_path),
+                "response_path": str(response_path),
+                "note_id": result["note_id"],
+                "quiz_question_ids": result["quiz_question_ids"],
+            },
+            indent=2,
+        )
+    )
+
+
+def _job_is_complete(job_id: str, settings: Settings) -> bool:
+    with session(settings) as db:
+        job = db.get(InvestigationJob, job_id)
+        status = job.status if job else None
+    return status == "complete"

@@ -15,12 +15,12 @@ import {
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { createElement, FormEvent, ReactNode, useMemo, useState } from "react";
 import { NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, Domain, Objective, QuizQuestion, RagResult, TopicResponse } from "./api/client";
+import { api, Domain, Note, Objective, QuizQuestion, RagResult, TopicResponse } from "./api/client";
 
 const navItems = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -230,71 +230,187 @@ function TopicDetail() {
     mutationFn: (payload: { body: string; create_followup_job?: boolean }) => api.feedback(topicId!, payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["topic", topicId] }),
   });
+  const generate = useMutation({
+    mutationFn: (payload: { query?: string | null }) => api.generateTopicNote(topicId!, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["objectives"] });
+    },
+  });
 
   return (
     <Page title={topic.data?.topic.title ?? "Topic detail"} intro={topic.data ? `${topic.data.topic.domain_name} · Objective ${topic.data.topic.objective_number}` : "Inspect topic material and study actions."}>
       <QueryState query={topic} loadingLabel="Loading topic detail">
-        {topic.data ? <TopicBody topic={topic.data} onFeedback={(body) => feedback.mutate({ body, create_followup_job: true })} /> : null}
+        {topic.data ? (
+          <TopicBody
+            topic={topic.data}
+            generation={generate}
+            onGenerate={() => generate.mutate({})}
+            onFeedback={(body) => feedback.mutate({ body, create_followup_job: true })}
+          />
+        ) : null}
       </QueryState>
     </Page>
   );
 }
 
-function TopicBody({ topic, onFeedback }: { topic: TopicResponse; onFeedback: (body: string) => void }) {
+function TopicBody({
+  topic,
+  generation,
+  onGenerate,
+  onFeedback,
+}: {
+  topic: TopicResponse;
+  generation: { isPending: boolean; isError: boolean; error: unknown; data?: { status: string; job_id: string } };
+  onGenerate: () => void;
+  onFeedback: (body: string) => void;
+}) {
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const latestNote = topic.notes[0] ?? null;
+  const selectedNote = topic.notes.find((note) => note.id === selectedNoteId) ?? latestNote;
+
   return (
-    <div className="topic-grid">
-      <section className="panel span-2">
-        <SectionHeader title="Notes" meta={`${topic.notes.length} generated`} />
-        {topic.notes.length ? topic.notes.map((note) => (
-          <article className="stack-item" key={note.id}>
-            <h3>{note.title}</h3>
-            <p>{note.body}</p>
-            <small>{note.provider}{note.model ? ` · ${note.model}` : ""}{note.vault_path ? ` · ${note.vault_path}` : ""}</small>
-          </article>
-        )) : <EmptyState icon={<BookOpen />} title="No notes yet" body="Run an investigation or ingest Codex output to generate grounded notes for this topic." />}
-      </section>
+    <div className="topic-study-layout">
+      <div className="topic-main">
+        <section className="panel note-panel">
+          <SectionHeader
+            title={selectedNote ? selectedNote.title : "Study note"}
+            meta={selectedNote ? noteMeta(selectedNote, topic.notes.length) : "No generated note"}
+            action={
+              <button className="button primary" onClick={onGenerate} disabled={generation.isPending}>
+                <RefreshCw aria-hidden="true" />
+                {generation.isPending ? "Generating" : latestNote ? "Regenerate note" : "Generate note"}
+              </button>
+            }
+          />
+          {topic.notes.length > 1 ? (
+            <label className="field compact-field">
+              Note version
+              <select value={selectedNote?.id ?? ""} onChange={(event) => setSelectedNoteId(event.target.value)}>
+                {topic.notes.map((note, index) => (
+                  <option key={note.id} value={note.id}>
+                    {index === 0 ? "Latest" : `Version ${topic.notes.length - index}`} · {formatDate(note.created_at)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {generation.data?.status === "needs_review" || topic.latest_job?.status === "needs_review" ? (
+            <div className="notice">
+              <Bot aria-hidden="true" />
+              <p>Host Codex bridge is waiting. Run <code>uv run ncp-aai codex-worker</code>, then refresh this topic after the response is ingested.</p>
+            </div>
+          ) : null}
+          {generation.isError ? <ErrorBox message={(generation.error as Error).message} /> : null}
+          {selectedNote ? (
+            <>
+              <MarkdownBody body={selectedNote.body} />
+              <NoteCitations note={selectedNote} />
+            </>
+          ) : (
+            <EmptyState icon={<BookOpen />} title="No note generated" body="Generate a host Codex note to turn local source chunks into a cited study summary." />
+          )}
+        </section>
 
-      <section className="panel">
-        <SectionHeader title="Quiz" meta={`${topic.quiz_questions.length} questions`} />
-        {topic.quiz_questions.length ? <QuizFlow questions={topic.quiz_questions} /> : <EmptyState icon={<Sparkles />} title="No quiz questions" body="Quiz items appear after cited synthesis output is ingested." />}
-      </section>
+        <section className="panel">
+          <SectionHeader title="Feedback" meta={`${topic.feedback.length} notes`} />
+          <FeedbackForm onSubmit={onFeedback} />
+          {topic.feedback.map((item) => (
+            <article className="stack-item compact" key={item.id}>
+              <p>{item.body}</p>
+              <small>{item.followup_job_id ? `Follow-up job ${item.followup_job_id}` : "No follow-up job"}</small>
+            </article>
+          ))}
+        </section>
+      </div>
 
-      <section className="panel">
-        <SectionHeader title="Sources" meta={`${topic.sources.length} linked`} />
-        {topic.sources.length ? topic.sources.map((source) => (
-          <article className="stack-item compact" key={source.id}>
-            <h3>{source.title}</h3>
-            <p>{source.path ?? source.url ?? source.content_type}</p>
-            <Badge>{source.status}</Badge>
-          </article>
-        )) : <EmptyState icon={<Database />} title="No linked sources" body="Ingest local source material from the inbox and attach it to this topic." />}
-      </section>
+      <aside className="topic-rail" aria-label="Topic study aids">
+        <section className="panel">
+          <SectionHeader title="Quiz" meta={`${topic.quiz_questions.length} questions`} />
+          {topic.quiz_questions.length ? <QuizFlow questions={topic.quiz_questions} /> : <EmptyState icon={<Sparkles />} title="No quiz questions" body="Quiz items appear after cited synthesis output is ingested." />}
+        </section>
 
-      <section className="panel">
-        <SectionHeader title="Exercises" meta={`${topic.exercises.length} open`} />
-        {topic.exercises.length ? topic.exercises.map((exercise) => (
-          <article className="stack-item compact" key={exercise.id}>
-            <h3>{exercise.title}</h3>
-            <p>{exercise.body}</p>
-          </article>
-        )) : <EmptyState icon={<Activity />} title="No exercises" body="Exercise recommendations will appear after synthesis identifies practice gaps." />}
-      </section>
+        <section className="panel">
+          <SectionHeader title="Sources" meta={`${topic.sources.length} linked`} />
+          {topic.sources.length ? topic.sources.map((source) => (
+            <article className="stack-item compact" key={source.id}>
+              <h3>{source.title}</h3>
+              <p>{source.path ?? source.url ?? source.content_type}</p>
+              <Badge>{source.status}</Badge>
+            </article>
+          )) : <EmptyState icon={<Database />} title="No linked sources" body="Ingest local source material from the inbox and attach it to this topic." />}
+        </section>
 
-      <section className="panel">
-        <SectionHeader title="Job history" meta={`${topic.jobs.length} jobs`} />
-        {topic.jobs.length ? topic.jobs.map((job) => <JobItem key={job.id} job={job} />) : <EmptyState icon={<Bot />} title="No investigations" body="Start an investigation from the Investigations view to populate this history." />}
-      </section>
+        <section className="panel">
+          <SectionHeader title="Exercises" meta={`${topic.exercises.length} open`} />
+          {topic.exercises.length ? topic.exercises.map((exercise) => (
+            <article className="stack-item compact" key={exercise.id}>
+              <h3>{exercise.title}</h3>
+              <p>{exercise.body}</p>
+            </article>
+          )) : <EmptyState icon={<Activity />} title="No exercises" body="Exercise recommendations will appear after synthesis identifies practice gaps." />}
+        </section>
+      </aside>
+    </div>
+  );
+}
 
-      <section className="panel span-2">
-        <SectionHeader title="Feedback" meta={`${topic.feedback.length} notes`} />
-        <FeedbackForm onSubmit={onFeedback} />
-        {topic.feedback.map((item) => (
-          <article className="stack-item compact" key={item.id}>
-            <p>{item.body}</p>
-            <small>{item.followup_job_id ? `Follow-up job ${item.followup_job_id}` : "No follow-up job"}</small>
-          </article>
-        ))}
-      </section>
+function MarkdownBody({ body }: { body: string }) {
+  const blocks = parseMarkdownBlocks(body);
+  return (
+    <div className="markdown-body">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          return createElement(`h${Math.min(block.level + 1, 6)}`, { key: index }, renderInline(block.text));
+        }
+        if (block.type === "list") {
+          return (
+            <ul key={index}>
+              {block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInline(item)}</li>)}
+            </ul>
+          );
+        }
+        return <p key={index}>{renderInline(block.text)}</p>;
+      })}
+    </div>
+  );
+}
+
+function renderInline(text: string): ReactNode[] {
+  const pattern = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    if (match[2] !== undefined || match[3] !== undefined) {
+      nodes.push(<strong key={key++}>{match[2] ?? match[3]}</strong>);
+    } else if (match[4] !== undefined || match[5] !== undefined) {
+      nodes.push(<em key={key++}>{match[4] ?? match[5]}</em>);
+    } else if (match[6] !== undefined) {
+      nodes.push(<code key={key++}>{match[6]}</code>);
+    } else if (match[7] !== undefined) {
+      nodes.push(<a key={key++} href={match[8]} target="_blank" rel="noreferrer">{match[7]}</a>);
+    }
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+function NoteCitations({ note }: { note: Note }) {
+  if (!note.citations.length) return null;
+  return (
+    <div className="citation-list">
+      <h3>Citations</h3>
+      {note.citations.map((citation) => (
+        <article className="citation-item" key={citation.id}>
+          <strong>{citation.label ?? citation.source_title}</strong>
+          {citation.quote ? <p>{citation.quote}</p> : null}
+          <small>{[citation.source_title, citation.section, citationPageLabel(citation), citation.source_path ?? citation.source_url ?? citation.source_chunk_id].filter(Boolean).join(" · ")}</small>
+        </article>
+      ))}
     </div>
   );
 }
@@ -665,10 +781,71 @@ function formatScore(score: number) {
   return `${score.toFixed(2)} score`;
 }
 
-function pageLabel(result: RagResult) {
-  if (result.page_start && result.page_end && result.page_start !== result.page_end) {
-    return `pages ${result.page_start}-${result.page_end}`;
-  }
-  if (result.page_start) return `page ${result.page_start}`;
+function pageRangeLabel(pageStart?: number | null, pageEnd?: number | null) {
+  if (pageStart && pageEnd && pageStart !== pageEnd) return `pages ${pageStart}-${pageEnd}`;
+  if (pageStart) return `page ${pageStart}`;
   return null;
+}
+
+function pageLabel(result: RagResult) {
+  return pageRangeLabel(result.page_start, result.page_end);
+}
+
+function noteMeta(note: Note, noteCount: number) {
+  return [
+    `${noteCount} version${noteCount === 1 ? "" : "s"}`,
+    note.provider,
+    note.model,
+    note.vault_path,
+  ].filter(Boolean).join(" · ");
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function citationPageLabel(citation: { page_start: number | null; page_end: number | null }) {
+  return pageRangeLabel(citation.page_start, citation.page_end);
+}
+
+type MarkdownBlock =
+  | { type: "heading"; text: string; level: number }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[] };
+
+function parseMarkdownBlocks(body: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  let listItems: string[] = [];
+
+  function flushList() {
+    if (listItems.length) {
+      blocks.push({ type: "list", items: listItems });
+      listItems = [];
+    }
+  }
+
+  for (const rawLine of body.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      blocks.push({ type: "heading", text: heading[2], level: heading[1].length });
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      listItems.push(bullet[1]);
+      continue;
+    }
+    flushList();
+    blocks.push({ type: "paragraph", text: line });
+  }
+  flushList();
+  return blocks;
 }

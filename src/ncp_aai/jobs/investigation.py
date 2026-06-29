@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import func, select, text, update
 
+from ncp_aai.agents.codex_bridge import load_codex_response, write_codex_request
 from ncp_aai.agents.codex_provider import CodexOutputInput
 from ncp_aai.agents.local_stub import build_stub_codex_output
 from ncp_aai.config import Settings, get_settings
@@ -163,6 +164,134 @@ def run_local_investigation(
         raise
 
 
+def run_host_codex_investigation(
+    topic_ref: str,
+    *,
+    query: str | None = None,
+    k: int = 12,
+    auto_ingest: bool = True,
+    settings: Settings | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    settings = settings or get_settings()
+    settings.ensure_directories()
+    import_objectives(settings=settings)
+
+    topic = resolve_topic(topic_ref, settings)
+    investigation_query = query or topic.title
+    job_id = job_id or create_investigation_job(
+        topic_id=topic.id,
+        query=investigation_query,
+        settings=settings,
+    )
+
+    try:
+        _update_job(
+            job_id,
+            settings,
+            status="collecting_sources",
+            log="Checking local sources for host Codex synthesis.",
+        )
+        ingest_result = None
+        if _linked_chunk_count(topic.id, settings) == 0:
+            if not auto_ingest:
+                raise SourceUnavailableError(
+                    f"No indexed source chunks found for {topic.id}; ingest sources first "
+                    "or rerun with auto-ingest."
+                )
+            ingest_result = ingest_local_file(
+                settings.bundled_study_guide_path,
+                source_type="study_guide_pdf",
+                objective_ids=[topic.objective_id],
+                topic_ids=[topic.id],
+                settings=settings,
+            )
+            _update_job(
+                job_id,
+                settings,
+                status="collecting_sources",
+                log=(
+                    "Auto-ingested bundled study guide "
+                    f"({ingest_result['chunk_count']} chunks, "
+                    f"deduplicated={ingest_result['deduplicated']})."
+                ),
+            )
+
+        results = RagStore(settings).query(investigation_query, k=k, topic_id=topic.id)
+        if not results:
+            raise SourceUnavailableError(f"No retrievable chunks found for {topic.id}.")
+
+        _update_job(
+            job_id,
+            settings,
+            status="extracting",
+            log=f"Retrieved {len(results)} local chunks for host Codex request.",
+        )
+        request_path = write_codex_request(
+            job_id=job_id,
+            topic_id=topic.id,
+            query=investigation_query,
+            retrieved_chunks=results,
+            settings=settings,
+        )
+        _update_job(
+            job_id,
+            settings,
+            status="synthesizing",
+            log=f"Wrote host Codex request: {request_path}",
+        )
+
+        def _host_result(job: dict[str, Any], **extra: Any) -> dict[str, Any]:
+            return {
+                "job_id": job_id,
+                "status": job["status"],
+                "topic_id": topic.id,
+                "objective_id": topic.objective_id,
+                "query": investigation_query,
+                "request_path": str(request_path),
+                "retrieved_chunk_count": len(results),
+                "ingest": ingest_result,
+                "logs": job["logs"],
+                "gaps": job["gaps"],
+                "artifact_ids": job["artifact_ids"],
+                **extra,
+            }
+
+        response = load_codex_response(job_id, settings)
+        if response is None:
+            _update_job(
+                job_id,
+                settings,
+                status="needs_review",
+                log=(
+                    "Waiting for host Codex bridge. Start `uv run ncp-aai codex-worker` "
+                    f"and retry after {job_id}.json appears in the responses directory."
+                ),
+                gaps=["Host Codex bridge response is required to finish synthesis."],
+                complete=True,
+            )
+            return _host_result(get_investigation_job(job_id, settings))
+
+        result = ingest_codex_payload_for_job(job_id, response, settings)
+        return _host_result(
+            get_investigation_job(job_id, settings),
+            note_id=result["note_id"],
+            quiz_question_ids=result["quiz_question_ids"],
+            vault_path=result["vault_path"],
+            citation_count=result["citation_count"],
+        )
+    except Exception as exc:
+        _update_job(
+            job_id,
+            settings,
+            status="failed",
+            error=str(exc),
+            log=f"Job failed: {exc}",
+            complete=True,
+        )
+        raise
+
+
 def ingest_operator_output_for_job(
     job_id: str,
     codex_output: dict[str, Any],
@@ -171,13 +300,23 @@ def ingest_operator_output_for_job(
     settings = settings or get_settings()
     _update_job(job_id, settings, status="synthesizing", log="Validating operator output.")
     codex_payload = CodexOutputInput.model_validate(codex_output)
+    return ingest_codex_payload_for_job(job_id, codex_payload, settings)
+
+
+def ingest_codex_payload_for_job(
+    job_id: str,
+    codex_payload: CodexOutputInput,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    settings = settings or get_settings()
     result = ingest_codex_output(codex_payload, settings)
     artifacts = [result["note_id"], *result["quiz_question_ids"]]
     _update_job(
         job_id,
         settings,
         status="complete",
-        log="Validated and persisted operator-provided Codex output.",
+        log="Validated and persisted Codex output.",
+        gaps=codex_payload.gaps,
         artifacts=artifacts,
         complete=True,
     )

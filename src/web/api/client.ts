@@ -61,6 +61,20 @@ export type Note = {
   model: string | null;
   vault_path: string | null;
   created_at: string;
+  citations: NoteCitation[];
+};
+
+export type NoteCitation = {
+  id: string;
+  source_chunk_id: string;
+  label: string | null;
+  quote: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  section: string | null;
+  source_title: string;
+  source_path: string | null;
+  source_url: string | null;
 };
 
 export type SourceRecord = {
@@ -123,7 +137,7 @@ export type TopicResponse = {
   quiz_questions: QuizQuestion[];
   exercises: ExerciseRecommendation[];
   feedback: FeedbackItem[];
-  jobs: InvestigationJob[];
+  latest_job: { id: string; status: string } | null;
 };
 
 export type RagResult = {
@@ -212,6 +226,11 @@ export const api = {
     request<InvestigationStartResponse>(`/api/topics/${encodeURIComponent(topicId)}/investigations`, {
       method: "POST",
       body: payload,
+    }),
+  generateTopicNote: (topicId: string, payload: { query?: string | null }) =>
+    request<InvestigationStartResponse>(`/api/topics/${encodeURIComponent(topicId)}/investigations`, {
+      method: "POST",
+      body: { ...payload, mode: "host_codex" },
     }),
   investigation: (jobId: string) =>
     request<InvestigationJob>(`/api/investigations/${encodeURIComponent(jobId)}`),

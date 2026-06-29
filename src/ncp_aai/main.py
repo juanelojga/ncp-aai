@@ -22,11 +22,13 @@ from ncp_aai.jobs.investigation import (
     create_investigation_job,
     get_investigation_job,
     ingest_operator_output_for_job,
+    run_host_codex_investigation,
     run_local_investigation,
 )
 from ncp_aai.jobs.queue import InvestigationWorker
 from ncp_aai.models import (
     AppSetting,
+    Citation,
     Domain,
     ExerciseRecommendation,
     FeedbackItem,
@@ -35,6 +37,7 @@ from ncp_aai.models import (
     Objective,
     QuizAttempt,
     QuizQuestion,
+    SourceChunk,
     SourceRecord,
     Topic,
     TopicSource,
@@ -97,8 +100,9 @@ class RagQueryRequest(BaseModel):
 class InvestigationRequest(BaseModel):
     query: str | None = None
     codex_output: dict[str, Any] | None = None
-    k: int = Field(default=5, ge=1, le=25)
+    k: int = Field(default=12, ge=1, le=25)
     auto_ingest: bool = True
+    mode: str = Field(default="host_codex", pattern="^(host_codex|local_stub)$")
 
 
 class QuizAttemptRequest(BaseModel):
@@ -261,13 +265,22 @@ def start_investigation(
             job_id = create_investigation_job(topic_id=topic_id, query=query, settings=settings)
             ingest_operator_output_for_job(job_id, request.codex_output, settings)
             return {"job_id": job_id, "status": "complete"}
-        result = run_local_investigation(
-            topic_id,
-            query=query,
-            k=request.k,
-            auto_ingest=request.auto_ingest,
-            settings=settings,
-        )
+        if request.mode == "local_stub":
+            result = run_local_investigation(
+                topic_id,
+                query=query,
+                k=request.k,
+                auto_ingest=request.auto_ingest,
+                settings=settings,
+            )
+        else:
+            result = run_host_codex_investigation(
+                topic_id,
+                query=query,
+                k=request.k,
+                auto_ingest=request.auto_ingest,
+                settings=settings,
+            )
         return {"job_id": result["job_id"], "status": result["status"]}
     except AmbiguousTopicError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -307,6 +320,25 @@ def get_topic(topic_id: Annotated[str, ApiPath()], settings: SettingsDep) -> dic
         notes = db.scalars(
             select(Note).where(Note.topic_id == topic_id).order_by(desc(Note.created_at))
         ).all()
+        citations = db.execute(
+            select(
+                Citation.id,
+                Citation.note_id,
+                Citation.source_chunk_id,
+                Citation.label,
+                Citation.quote,
+                SourceChunk.page_start,
+                SourceChunk.page_end,
+                SourceChunk.section,
+                SourceRecord.title.label("source_title"),
+                SourceRecord.path.label("source_path"),
+                SourceRecord.url.label("source_url"),
+            )
+            .join(SourceChunk, SourceChunk.id == Citation.source_chunk_id)
+            .join(SourceRecord, SourceRecord.id == SourceChunk.source_id)
+            .where(Citation.note_id.in_([note.id for note in notes] or [""]))
+            .order_by(Citation.created_at)
+        ).all()
         sources = db.scalars(
             select(SourceRecord)
             .join(TopicSource, TopicSource.source_id == SourceRecord.id)
@@ -328,19 +360,32 @@ def get_topic(topic_id: Annotated[str, ApiPath()], settings: SettingsDep) -> dic
             .where(FeedbackItem.topic_id == topic_id)
             .order_by(desc(FeedbackItem.created_at))
         ).all()
-        jobs = db.scalars(
+        latest_job = db.scalars(
             select(InvestigationJob)
             .where(InvestigationJob.topic_id == topic_id)
             .order_by(desc(InvestigationJob.created_at))
-        ).all()
+        ).first()
+    latest_job_payload = (
+        {"id": latest_job.id, "status": latest_job.status} if latest_job else None
+    )
+    citations_by_note: dict[str, list[dict[str, Any]]] = {}
+    for citation in citations:
+        item = mapping_to_dict(citation)
+        note_id = item.pop("note_id")
+        citations_by_note.setdefault(note_id, []).append(item)
+    note_payloads = []
+    for row in notes:
+        note = model_to_dict(row)
+        note["citations"] = citations_by_note.get(row.id, [])
+        note_payloads.append(note)
     return {
         "topic": mapping_to_dict(topic),
-        "notes": [model_to_dict(row) for row in notes],
+        "notes": note_payloads,
         "sources": [model_to_dict(row) for row in sources],
         "quiz_questions": [_decode_quiz(row) for row in quizzes],
         "exercises": [model_to_dict(row) for row in exercises],
         "feedback": [model_to_dict(row) for row in feedback],
-        "jobs": [_decode_job(row) for row in jobs],
+        "latest_job": latest_job_payload,
     }
 
 
@@ -432,7 +477,19 @@ def run_slice(request: SliceRunRequest, settings: SettingsDep) -> dict[str, Any]
 
 @app.get("/api/provider/codex")
 def codex_provider_info() -> dict[str, Any]:
-    return CodexOperatorProvider().info().model_dump()
+    settings = get_settings()
+    info = CodexOperatorProvider().info().model_dump()
+    info.update(
+        {
+            "available": False,
+            "mode": "host_bridge",
+            "output_dir": str(settings.codex_output_dir),
+            "request_dir": str(settings.codex_output_dir / "requests"),
+            "response_dir": str(settings.codex_output_dir / "responses"),
+            "command_hint": "uv run ncp-aai codex-worker",
+        }
+    )
+    return info
 
 
 @app.get("/assets/{asset_path:path}", include_in_schema=False)
@@ -458,12 +515,4 @@ def _decode_quiz(row: Any) -> dict[str, Any]:
     data = model_to_dict(row) if hasattr(row, "__table__") else mapping_to_dict(row)
     data["options"] = json.loads(data.pop("options_json"))
     data["metadata"] = json.loads(data.pop("metadata_json"))
-    return data
-
-
-def _decode_job(row: Any) -> dict[str, Any]:
-    data = model_to_dict(row) if hasattr(row, "__table__") else mapping_to_dict(row)
-    data["logs"] = json.loads(data.pop("logs_json"))
-    data["gaps"] = json.loads(data.pop("gaps_json"))
-    data["artifact_ids"] = json.loads(data.pop("artifact_ids_json"))
     return data

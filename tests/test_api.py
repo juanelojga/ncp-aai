@@ -61,7 +61,7 @@ def test_start_investigation_returns_completed_local_job(app_settings):
         client = TestClient(app)
         response = client.post(
             "/api/topics/topic-1.1/investigations",
-            json={"auto_ingest": False},
+            json={"auto_ingest": False, "mode": "local_stub"},
         )
         assert response.status_code == 200
         body = response.json()
@@ -72,5 +72,65 @@ def test_start_investigation_returns_completed_local_job(app_settings):
         job = job_response.json()
         assert job["status"] == "complete"
         assert job["artifact_ids"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_start_investigation_defaults_to_host_bridge_needs_review(app_settings):
+    import_objectives(settings=app_settings)
+    source = app_settings.app_inbox_dir / "ui.txt"
+    source.write_text(
+        "Human-agent interaction design should expose progress, feedback, and oversight.",
+        encoding="utf-8",
+    )
+    ingest_inbox_file(
+        "ui.txt",
+        objective_ids=["objective-1.1"],
+        topic_ids=["topic-1.1"],
+        settings=app_settings,
+    )
+
+    app.dependency_overrides[settings_dep] = lambda: app_settings
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/topics/topic-1.1/investigations",
+            json={"auto_ingest": False},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "needs_review"
+        assert (app_settings.codex_output_dir / "requests" / f"{body['job_id']}.json").exists()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_topic_endpoint_returns_note_citation_metadata_without_jobs(app_settings):
+    import_objectives(settings=app_settings)
+    source = app_settings.app_inbox_dir / "ui.txt"
+    source.write_text(
+        "Human-agent interaction design should expose progress, feedback, and oversight.",
+        encoding="utf-8",
+    )
+    ingest_inbox_file(
+        "ui.txt",
+        objective_ids=["objective-1.1"],
+        topic_ids=["topic-1.1"],
+        settings=app_settings,
+    )
+
+    app.dependency_overrides[settings_dep] = lambda: app_settings
+    try:
+        client = TestClient(app)
+        client.post(
+            "/api/topics/topic-1.1/investigations",
+            json={"auto_ingest": False, "mode": "local_stub"},
+        )
+        response = client.get("/api/topics/topic-1.1")
+        assert response.status_code == 200
+        body = response.json()
+        assert "jobs" not in body
+        assert body["notes"][0]["citations"][0]["source_title"] == "ui"
+        assert body["notes"][0]["citations"][0]["source_chunk_id"]
     finally:
         app.dependency_overrides.clear()

@@ -409,6 +409,78 @@ a {
   color: var(--color-muted);
 }
 
+.topic-study-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 12px;
+  align-items: start;
+}
+
+.topic-main,
+.topic-rail {
+  display: grid;
+  gap: 12px;
+}
+
+.note-panel {
+  align-content: start;
+}
+
+.compact-field {
+  max-width: 320px;
+}
+
+.markdown-body {
+  max-width: 74ch;
+  display: grid;
+  gap: 10px;
+}
+
+.markdown-body h3 {
+  margin: 8px 0 0;
+  font-size: 16px;
+}
+
+.markdown-body p,
+.markdown-body ul {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.markdown-body ul {
+  padding-left: 20px;
+}
+
+.citation-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.citation-list h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.citation-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.citation-item p {
+  margin: 0;
+}
+
+.citation-item small {
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
 .result-meta {
   display: flex;
   gap: 12px;
@@ -438,6 +510,7 @@ label,
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--color-border);
@@ -445,6 +518,10 @@ textarea {
   background: var(--color-bg);
   color: var(--color-ink);
   padding: 8px 10px;
+}
+
+select {
+  min-height: 36px;
 }
 
 textarea {
@@ -627,6 +704,10 @@ textarea::placeholder {
 
   .topic-grid .span-2 {
     grid-column: span 1;
+  }
+
+  .topic-study-layout {
+    grid-template-columns: 1fr;
   }
 }
 
