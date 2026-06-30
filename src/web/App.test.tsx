@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -201,12 +201,38 @@ describe("NCP-AAI frontend", () => {
     expect(await screen.findByLabelText("Mind map")).toBeInTheDocument();
     expect(await screen.findAllByText("Key concepts")).toHaveLength(2);
     expect(screen.getAllByText("Capability clarity")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /expand mind map/i })).toBeInTheDocument();
     expect(screen.getByText("chunk-key")).toBeInTheDocument();
     expect(screen.getByText("chunk-capability")).toBeInTheDocument();
 
     const source = screen.getByText("Source").closest("details") as HTMLElement;
     expect(within(source).getByText(/root\(\(Agent architecture \[chunk-root\]\)/)).toBeInTheDocument();
     expect(mermaidRenderMock).toHaveBeenCalledWith(expect.any(String), expect.not.stringContaining("[chunk-key]"));
+  });
+
+  it("opens the topic mind map in a fullscreen view", async () => {
+    const user = userEvent.setup();
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    await user.click(await screen.findByRole("button", { name: /expand mind map/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /expanded mind map/i });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText("Key concepts")).toBeInTheDocument();
+    expect(within(dialog).getByText("Capability clarity")).toBeInTheDocument();
+  });
+
+  it("closes the fullscreen mind map and returns focus to the inline control", async () => {
+    const user = userEvent.setup();
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    const expandButton = await screen.findByRole("button", { name: /expand mind map/i });
+    await user.click(expandButton);
+    await user.click(screen.getByRole("button", { name: /close expanded mind map/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /expanded mind map/i })).not.toBeInTheDocument());
+    await waitFor(() => expect(expandButton).toHaveFocus());
+    expect(screen.getByLabelText("Mind map")).toBeInTheDocument();
   });
 
   it("keeps the mind map outline available when Mermaid rendering fails", async () => {

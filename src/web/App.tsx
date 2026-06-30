@@ -7,6 +7,7 @@ import {
   FileInput,
   GraduationCap,
   LayoutDashboard,
+  Maximize2,
   MessageSquareText,
   Play,
   RefreshCw,
@@ -14,8 +15,9 @@ import {
   Settings,
   ShieldAlert,
   Sparkles,
+  X,
 } from "lucide-react";
-import { createElement, FormEvent, ReactNode, useEffect, useId, useMemo, useState, type CSSProperties } from "react";
+import { createElement, FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -392,6 +394,8 @@ function MindMapBlock({ source }: { source: string }) {
   const renderId = useId().replace(/:/g, "");
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const expandButtonRef = useRef<HTMLButtonElement | null>(null);
   const isMindmap = isMermaidMindmap(source);
   const outline = useMemo(() => parseMindmapOutline(source), [source]);
 
@@ -421,6 +425,20 @@ function MindMapBlock({ source }: { source: string }) {
     };
   }, [isMindmap, renderId, source]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeExpanded();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
+
+  function closeExpanded() {
+    setExpanded(false);
+    window.requestAnimationFrame(() => expandButtonRef.current?.focus());
+  }
+
   if (!isMindmap) {
     return (
       <pre className="code-block">
@@ -436,7 +454,12 @@ function MindMapBlock({ source }: { source: string }) {
           <h3>Mind map</h3>
           <p>Visual topic structure with cited chunk markers cleaned from the diagram labels.</p>
         </div>
-        {error ? <Badge>Outline fallback</Badge> : <Badge>{svg ? "Rendered" : "Rendering"}</Badge>}
+        <div className="mind-map-actions">
+          {error ? <Badge>Outline fallback</Badge> : <Badge>{svg ? "Rendered" : "Rendering"}</Badge>}
+          <button ref={expandButtonRef} className="button secondary icon-button" type="button" onClick={() => setExpanded(true)} disabled={!svg || Boolean(error)} aria-label="Expand mind map">
+            <Maximize2 aria-hidden="true" />
+          </button>
+        </div>
       </div>
       {svg && !error ? <div className="mind-map-canvas" dangerouslySetInnerHTML={{ __html: svg }} /> : null}
       {error ? <div className="mind-map-fallback" role="status">Visual renderer unavailable. The outline and source remain available.</div> : null}
@@ -447,6 +470,22 @@ function MindMapBlock({ source }: { source: string }) {
           <code>{source}</code>
         </pre>
       </details>
+      {expanded && svg && !error ? (
+        <div className="mind-map-fullscreen" role="dialog" aria-modal="true" aria-label="Expanded mind map">
+          <div className="mind-map-fullscreen-panel">
+            <div className="mind-map-fullscreen-header">
+              <h3>Mind map</h3>
+              <div className="mind-map-actions">
+                <Badge>Rendered</Badge>
+                <button className="button secondary icon-button" type="button" onClick={closeExpanded} aria-label="Close expanded mind map" autoFocus>
+                  <X aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+            <div className="mind-map-fullscreen-canvas" dangerouslySetInnerHTML={{ __html: svg }} />
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
