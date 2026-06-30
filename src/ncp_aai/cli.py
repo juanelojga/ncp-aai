@@ -14,6 +14,7 @@ from ncp_aai.agents.codex_bridge import (
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import init_db, session
 from ncp_aai.ingestion.service import ingest_local_file
+from ncp_aai.jobs.domain_generation import generate_domain_study_material
 from ncp_aai.jobs.investigation import (
     AmbiguousTopicError,
     InvestigationError,
@@ -48,6 +49,18 @@ def main() -> None:
     investigate_parser.add_argument("--k", type=int, default=5)
     investigate_parser.add_argument("--no-auto-ingest", action="store_true")
     investigate_parser.add_argument("--json", action="store_true")
+
+    generate_domain_parser = subparsers.add_parser("generate-domain")
+    generate_domain_parser.add_argument("domain")
+    generate_domain_parser.add_argument(
+        "--mode",
+        choices=["host_codex", "local_stub"],
+        default="host_codex",
+    )
+    generate_domain_parser.add_argument("--k", type=int, default=12)
+    generate_domain_parser.add_argument("--no-auto-ingest", action="store_true")
+    generate_domain_parser.add_argument("--force", action="store_true")
+    generate_domain_parser.add_argument("--topic-id", action="append", default=[])
 
     codex_worker_parser = subparsers.add_parser("codex-worker")
     codex_worker_parser.add_argument("--once", action="store_true")
@@ -93,6 +106,24 @@ def main() -> None:
         except AmbiguousTopicError as exc:
             parser.exit(2, json.dumps({"error": str(exc), "candidates": exc.candidates}) + "\n")
         except InvestigationError as exc:
+            parser.exit(1, json.dumps({"error": str(exc)}) + "\n")
+    elif args.command == "generate-domain":
+        try:
+            print(
+                json.dumps(
+                    generate_domain_study_material(
+                        args.domain,
+                        mode=args.mode,
+                        k=args.k,
+                        auto_ingest=not args.no_auto_ingest,
+                        force=args.force,
+                        topic_ids=args.topic_id,
+                        settings=settings,
+                    ),
+                    indent=2,
+                )
+            )
+        except ValueError as exc:
             parser.exit(1, json.dumps({"error": str(exc)}) + "\n")
     elif args.command == "codex-worker":
         _run_codex_worker(

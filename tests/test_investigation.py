@@ -2,13 +2,14 @@ import json
 import sys
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ncp_aai.cli import _run_codex_worker
 from ncp_aai.cli import main as cli_main
 from ncp_aai.db import session
 from ncp_aai.ingestion.service import ingest_inbox_file, ingest_local_file
 from ncp_aai.jobs import investigation as investigation_module
+from ncp_aai.jobs.domain_generation import generate_domain_study_material, list_domain_topics
 from ncp_aai.jobs.investigation import (
     SourceUnavailableError,
     ingest_codex_payload_for_job,
@@ -36,6 +37,27 @@ def _seed_ui_source(app_settings) -> None:
     )
 
 
+def _seed_domain_one_source(app_settings, topic_ids: list[str] | None = None) -> None:
+    import_objectives(settings=app_settings)
+    topic_ids = topic_ids or [f"topic-1.{index}" for index in range(1, 9)]
+    source = app_settings.app_inbox_dir / "domain-one-agent-architecture.md"
+    source.write_text(
+        "# Agent Architecture and Design\n\n"
+        "Human-agent interfaces expose state, feedback, and oversight. ReAct combines "
+        "reasoning traces with tool actions. Agent-to-agent collaboration needs protocols, "
+        "message schemas, and coordination. Short-term and long-term memory retain context. "
+        "Multi-agent workflows use orchestration, prompt chains, logic trees, state, knowledge "
+        "graphs, adaptability, and scalable architecture patterns.",
+        encoding="utf-8",
+    )
+    ingest_inbox_file(
+        "domain-one-agent-architecture.md",
+        objective_ids=[f"objective-1.{index}" for index in range(1, 9)],
+        topic_ids=topic_ids,
+        settings=app_settings,
+    )
+
+
 def test_resolve_topic_accepts_id_and_title(app_settings):
     import_objectives(settings=app_settings)
 
@@ -48,6 +70,53 @@ def test_resolve_topic_accepts_id_and_title(app_settings):
     assert by_id.id == "topic-1.1"
     assert by_title.id == "topic-1.1"
     assert by_title.objective_id == "objective-1.1"
+
+
+def test_domain_topic_selection_orders_and_skips_complete_topics(app_settings):
+    _seed_domain_one_source(app_settings)
+    existing = run_local_investigation("topic-1.1", settings=app_settings, auto_ingest=False)
+
+    topics = list_domain_topics("domain-1", settings=app_settings)
+    assert [topic.id for topic in topics] == [f"topic-1.{index}" for index in range(1, 9)]
+    assert topics[0].note_count == 1
+    assert topics[0].quiz_count == 1
+
+    result = generate_domain_study_material(
+        "domain-1",
+        mode="local_stub",
+        auto_ingest=False,
+        topic_ids=["topic-1.1", "topic-1.2"],
+        settings=app_settings,
+    )
+
+    assert existing["note_id"]
+    assert [item["topic_id"] for item in result["skipped"]] == ["topic-1.1"]
+    assert [item["topic_id"] for item in result["created"]] == ["topic-1.2"]
+    assert result["failed"] == []
+
+
+def test_domain_local_stub_generation_persists_missing_topic_artifacts(app_settings):
+    _seed_domain_one_source(app_settings, topic_ids=["topic-1.2", "topic-1.3"])
+
+    result = generate_domain_study_material(
+        "domain-1",
+        mode="local_stub",
+        auto_ingest=False,
+        topic_ids=["topic-1.2", "topic-1.3"],
+        settings=app_settings,
+    )
+
+    assert result["skipped"] == []
+    assert result["failed"] == []
+    assert [item["topic_id"] for item in result["created"]] == ["topic-1.2", "topic-1.3"]
+    assert all(item["note_id"].startswith("note-") for item in result["created"])
+    assert all(len(item["quiz_question_ids"]) == 1 for item in result["created"])
+
+    with session(app_settings) as db:
+        note_count = db.scalar(select(func.count()).select_from(Note))
+        quiz_count = db.scalar(select(func.count()).select_from(QuizQuestion))
+    assert note_count == 2
+    assert quiz_count == 2
 
 
 def test_local_investigation_completes_and_persists_artifacts(app_settings):
@@ -123,6 +192,31 @@ def test_host_codex_investigation_writes_request_and_needs_review(app_settings):
     assert request["objective_id"] == "objective-1.1"
     assert len(request["retrieved_chunks"]) >= 1
     assert request["retrieved_chunks"][0]["source_chunk_id"]
+
+
+def test_domain_host_bridge_writes_request_with_study_sections(app_settings):
+    _seed_domain_one_source(app_settings, topic_ids=["topic-1.2"])
+
+    result = generate_domain_study_material(
+        "domain-1",
+        mode="host_codex",
+        auto_ingest=False,
+        topic_ids=["topic-1.2"],
+        settings=app_settings,
+    )
+
+    assert result["failed"] == []
+    assert result["created"][0]["status"] == "needs_review"
+    request_path = (
+        app_settings.codex_output_dir
+        / "requests"
+        / f"{result['created'][0]['job_id']}.json"
+    )
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert request["topic_id"] == "topic-1.2"
+    assert "Practical explanation" in request["instructions"]
+    assert "Study guide" in request["instructions"]
+    assert "Tradeoffs/failure modes" in request["instructions"]
 
 
 def test_host_codex_response_ingests_new_note_version(app_settings):
@@ -235,3 +329,29 @@ def test_cli_investigate_prints_json_result(app_settings, monkeypatch, capsys):
     assert output["status"] == "complete"
     assert output["topic_id"] == "topic-1.1"
     assert output["note_id"].startswith("note-")
+
+
+def test_cli_generate_domain_prints_json_summary(app_settings, monkeypatch, capsys):
+    _seed_domain_one_source(app_settings, topic_ids=["topic-1.2"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ncp-aai",
+            "generate-domain",
+            "domain-1",
+            "--mode",
+            "local_stub",
+            "--no-auto-ingest",
+            "--topic-id",
+            "topic-1.2",
+        ],
+    )
+
+    cli_main()
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["domain_id"] == "domain-1"
+    assert output["mode"] == "local_stub"
+    assert output["created"][0]["topic_id"] == "topic-1.2"
+    assert output["created"][0]["job_id"].startswith("job-")

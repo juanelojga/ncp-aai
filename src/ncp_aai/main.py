@@ -2,7 +2,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi import Path as ApiPath
@@ -16,6 +16,7 @@ from ncp_aai.agents.local_stub import build_stub_codex_output
 from ncp_aai.config import Settings, get_settings
 from ncp_aai.db import init_db, mapping_to_dict, model_to_dict, session
 from ncp_aai.ingestion.service import ingest_inbox_file, ingest_local_file
+from ncp_aai.jobs.domain_generation import generate_domain_study_material
 from ncp_aai.jobs.investigation import (
     AmbiguousTopicError,
     InvestigationError,
@@ -103,6 +104,14 @@ class InvestigationRequest(BaseModel):
     k: int = Field(default=12, ge=1, le=25)
     auto_ingest: bool = True
     mode: str = Field(default="host_codex", pattern="^(host_codex|local_stub)$")
+
+
+class DomainStudyGenerationRequest(BaseModel):
+    mode: Literal["host_codex", "local_stub"] = "host_codex"
+    k: int = Field(default=12, ge=1, le=25)
+    auto_ingest: bool = True
+    force: bool = False
+    topic_ids: list[str] = Field(default_factory=list)
 
 
 class QuizAttemptRequest(BaseModel):
@@ -286,6 +295,26 @@ def start_investigation(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InvestigationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/domains/{domain_id}/study-generation")
+def start_domain_study_generation(
+    domain_id: Annotated[str, ApiPath()],
+    request: DomainStudyGenerationRequest,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    try:
+        return generate_domain_study_material(
+            domain_id,
+            mode=request.mode,
+            k=request.k,
+            auto_ingest=request.auto_ingest,
+            force=request.force,
+            topic_ids=request.topic_ids,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/investigations/{job_id}")

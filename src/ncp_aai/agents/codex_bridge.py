@@ -88,6 +88,9 @@ def write_codex_request(
         ],
         instructions=(
             "Create a concise certification study note grounded in the provided chunks. "
+            "The Markdown note_body must use these sections in this order: Practical "
+            "explanation, Study guide, Key concepts, Architecture/design patterns, Examples, "
+            "Tradeoffs/failure modes, Exam cues, Gaps. "
             "Return only JSON matching the supplied schema. Every note citation and quiz citation "
             "must reference a source_chunk_id from retrieved_chunks. Include provider metadata, a "
             "Markdown note_body, 2-4 quiz_items when evidence supports them, and gaps for missing "

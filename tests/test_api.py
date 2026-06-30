@@ -105,6 +105,54 @@ def test_start_investigation_defaults_to_host_bridge_needs_review(app_settings):
         app.dependency_overrides.clear()
 
 
+def test_domain_study_generation_endpoint_creates_local_artifacts(app_settings):
+    import_objectives(settings=app_settings)
+    source = app_settings.app_inbox_dir / "domain-one.md"
+    source.write_text(
+        "ReAct frameworks combine reasoning and action. Agent protocols coordinate "
+        "collaboration, memory, orchestration, logic trees, knowledge graphs, and scalable "
+        "agent architecture.",
+        encoding="utf-8",
+    )
+    ingest_inbox_file(
+        "domain-one.md",
+        objective_ids=["objective-1.2", "objective-1.3"],
+        topic_ids=["topic-1.2", "topic-1.3"],
+        settings=app_settings,
+    )
+
+    app.dependency_overrides[settings_dep] = lambda: app_settings
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/domains/domain-1/study-generation",
+            json={
+                "auto_ingest": False,
+                "mode": "local_stub",
+                "topic_ids": ["topic-1.2", "topic-1.3"],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["topic_id"] for item in body["created"]] == ["topic-1.2", "topic-1.3"]
+        assert body["skipped"] == []
+        assert body["failed"] == []
+
+        objectives_response = client.get("/api/objectives")
+        domain_one = objectives_response.json()["domains"][0]
+        generated = {
+            objective["topic_id"]: objective
+            for objective in domain_one["objectives"]
+            if objective["topic_id"] in {"topic-1.2", "topic-1.3"}
+        }
+        assert generated["topic-1.2"]["note_count"] == 1
+        assert generated["topic-1.2"]["quiz_count"] == 1
+        assert generated["topic-1.3"]["note_count"] == 1
+        assert generated["topic-1.3"]["quiz_count"] == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_topic_endpoint_returns_note_citation_metadata_without_jobs(app_settings):
     import_objectives(settings=app_settings)
     source = app_settings.app_inbox_dir / "ui.txt"
