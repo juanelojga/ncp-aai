@@ -22,6 +22,7 @@ from ncp_aai.jobs.investigation import (
     ingest_codex_payload_for_job,
     run_local_investigation,
 )
+from ncp_aai.jobs.suggested_readings import fetch_suggested_readings
 from ncp_aai.models import InvestigationJob
 from ncp_aai.objectives import import_objectives
 from ncp_aai.rag.store import RagStore
@@ -61,6 +62,14 @@ def main() -> None:
     generate_domain_parser.add_argument("--no-auto-ingest", action="store_true")
     generate_domain_parser.add_argument("--force", action="store_true")
     generate_domain_parser.add_argument("--topic-id", action="append", default=[])
+
+    fetch_readings_parser = subparsers.add_parser("fetch-readings")
+    fetch_readings_parser.add_argument("--domain", dest="domain_id")
+    fetch_readings_parser.add_argument("--topic-id")
+    fetch_readings_parser.add_argument("--limit", type=int)
+    fetch_readings_parser.add_argument("--dry-run", action="store_true")
+    fetch_readings_parser.add_argument("--force", action="store_true")
+    fetch_readings_parser.add_argument("--json", action="store_true")
 
     codex_worker_parser = subparsers.add_parser("codex-worker")
     codex_worker_parser.add_argument("--once", action="store_true")
@@ -123,6 +132,19 @@ def main() -> None:
                     indent=2,
                 )
             )
+        except ValueError as exc:
+            parser.exit(1, json.dumps({"error": str(exc)}) + "\n")
+    elif args.command == "fetch-readings":
+        try:
+            result = fetch_suggested_readings(
+                domain_id=args.domain_id,
+                topic_id=args.topic_id,
+                limit=args.limit,
+                dry_run=args.dry_run,
+                force=args.force,
+                settings=settings,
+            )
+            print(json.dumps(result, indent=2))
         except ValueError as exc:
             parser.exit(1, json.dumps({"error": str(exc)}) + "\n")
     elif args.command == "codex-worker":

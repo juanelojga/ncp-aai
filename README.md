@@ -9,8 +9,8 @@ The goal is to build a single-user web app that can investigate each exam topic 
 The first backend and web implementation is in place. The repository now includes a FastAPI
 application, SQLite persistence, objective import, local document ingestion, deterministic offline
 retrieval, host Codex request/response synthesis, Codex-output ingestion, quiz attempts, feedback,
-background investigation jobs, Docker packaging, the first React/Vite study web app, and focused
-backend/frontend test suites.
+background investigation jobs, suggested-reading web ingestion, Docker packaging, the first
+React/Vite study web app, and focused backend/frontend test suites.
 
 The product source of truth remains:
 
@@ -246,6 +246,28 @@ curl -X POST http://localhost:48673/api/sources/ingest \
   -d '{"path":"study-guide.pdf","source_type":"study_guide_pdf","objective_ids":["objective-1.1"],"topic_ids":["topic-1.1"]}'
 ```
 
+Preview the study-guide seed readings that would be fetched for Domain 1:
+
+```bash
+curl -X POST http://localhost:48673/api/readings/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"domain_id":"domain-1","dry_run":true}'
+```
+
+Fetch and ingest the first two suggested readings for Domain 1:
+
+```bash
+curl -X POST http://localhost:48673/api/readings/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"domain_id":"domain-1","limit":2}'
+```
+
+The fetcher reads seed titles from `EXAM_OBJECTIVES.md`, resolves URLs through DuckDuckGo,
+extracts readable HTML text, creates `SourceRecord` rows with
+`source_type="suggested_reading"`, chunks and indexes the text, and links each domain reading to
+every topic in that domain. Use `topic_id` to fetch the domain readings but link them only to one
+topic, and use `force:true` to re-fetch a URL that is already known.
+
 Query local RAG:
 
 ```bash
@@ -340,10 +362,16 @@ Useful host commands for local development outside Docker:
 uv run ncp-aai init-db
 uv run ncp-aai import-objectives
 uv run ncp-aai ingest ./nvt-study-guide-new-agentic-ai-cert-exam-4230000.pdf --objective-id objective-1.1 --topic-id topic-1.1
+uv run ncp-aai fetch-readings --domain domain-1 --limit 2 --dry-run --json
+uv run ncp-aai fetch-readings --domain domain-1 --limit 2 --json
 uv run ncp-aai query "agent architecture and human agent interaction"
 uv run ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
 uv run ncp-aai codex-worker --once
 ```
+
+`fetch-readings` requires network access. It returns JSON with `counts` and per-reading `results`.
+Each result has a status: `skipped` for dry runs, `fetched` for newly indexed content, `linked` for
+an existing URL that was reused and linked to topics, or `failed` for an isolated URL/fetch error.
 
 `investigate` resolves a topic ID or objective title, imports objectives if needed, auto-ingests
 the bundled study guide when the topic has no indexed sources, retrieves local context, and writes a
@@ -356,6 +384,13 @@ mounted `data`, `vault`, `inbox`, and `artifacts` directories as the web app:
 
 ```bash
 docker compose exec app ncp-aai investigate "Design user interfaces for intuitive human-agent interaction"
+```
+
+For suggested readings in Docker, use the same container CLI so results are written to the mounted
+SQLite database and vector store:
+
+```bash
+docker compose exec app ncp-aai fetch-readings --domain domain-1 --limit 2 --json
 ```
 
 Run `codex-worker` on the host, not inside Docker, because the container cannot safely launch the
@@ -414,7 +449,8 @@ The MVP should follow the implementation plan in order:
 1. Create the Python backend skeleton. Done.
 2. Add the single-container Docker runtime. Done.
 3. Add SQLite persistence and objective import from `EXAM_OBJECTIVES.md`. Done.
-4. Implement local file ingestion and retrieval. Done for local files with deterministic fallback.
+4. Implement local file ingestion and retrieval. Done for local files and suggested-reading web
+   pages with deterministic fallback.
 5. Add the Codex provider adapter and investigation job model. Done for host bridge requests,
    structured response ingestion, and local stub fallback.
 6. Generate notes, citations, quizzes, and exercises. Partially done: ingestion, validation, quiz

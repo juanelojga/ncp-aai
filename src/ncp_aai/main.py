@@ -27,6 +27,7 @@ from ncp_aai.jobs.investigation import (
     run_local_investigation,
 )
 from ncp_aai.jobs.queue import InvestigationWorker
+from ncp_aai.jobs.suggested_readings import fetch_suggested_readings
 from ncp_aai.models import (
     AppSetting,
     Citation,
@@ -112,6 +113,14 @@ class DomainStudyGenerationRequest(BaseModel):
     auto_ingest: bool = True
     force: bool = False
     topic_ids: list[str] = Field(default_factory=list)
+
+
+class ReadingFetchRequest(BaseModel):
+    domain_id: str | None = None
+    topic_id: str | None = None
+    limit: int | None = Field(default=None, ge=1)
+    dry_run: bool = False
+    force: bool = False
 
 
 class QuizAttemptRequest(BaseModel):
@@ -231,6 +240,21 @@ def ingest_source(request: SourceIngestRequest, settings: SettingsDep) -> dict[s
             settings=settings,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/readings/fetch")
+def fetch_readings(request: ReadingFetchRequest, settings: SettingsDep) -> dict[str, Any]:
+    try:
+        return fetch_suggested_readings(
+            domain_id=request.domain_id,
+            topic_id=request.topic_id,
+            limit=request.limit,
+            dry_run=request.dry_run,
+            force=request.force,
+            settings=settings,
+        )
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

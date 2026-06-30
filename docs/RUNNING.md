@@ -111,6 +111,92 @@ curl -X POST http://localhost:48673/api/rag/query \
   -d '{"query":"agent architecture and human agent interaction","objective_id":"objective-1.1","k":5}'
 ```
 
+## Fetch Suggested Readings
+
+`EXAM_OBJECTIVES.md` includes seed reading titles for each exam domain. The suggested-reading
+fetcher turns those seeds into indexed RAG sources:
+
+1. Parse domain courses and seed readings from `EXAM_OBJECTIVES.md`.
+2. Resolve each seed title to a URL with DuckDuckGo.
+3. Fetch the page with `httpx` and extract readable HTML text with BeautifulSoup.
+4. Store the page as `source_type="suggested_reading"`.
+5. Chunk and index the text, then link it to topics.
+
+Import objectives before fetching so domain and topic IDs exist:
+
+```bash
+curl -X POST http://localhost:48673/admin/import-objectives
+```
+
+Preview what Domain 1 would fetch without network downloads or database writes:
+
+```bash
+curl -X POST http://localhost:48673/api/readings/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"domain_id":"domain-1","dry_run":true}'
+```
+
+Fetch a small batch:
+
+```bash
+curl -X POST http://localhost:48673/api/readings/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"domain_id":"domain-1","limit":2}'
+```
+
+Target one topic instead of linking the domain readings to every topic in the domain:
+
+```bash
+curl -X POST http://localhost:48673/api/readings/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"topic_id":"topic-1.2","limit":2}'
+```
+
+Available request fields:
+
+| Field | Meaning |
+|---|---|
+| `domain_id` | Fetch seeds for one imported domain, for example `domain-1`. |
+| `topic_id` | Fetch that topic's domain seeds, but link sources only to that topic. |
+| `limit` | Maximum number of seed readings to process. Useful for incremental runs. |
+| `dry_run` | Return the planned seeds and topic links without resolving URLs or writing sources. |
+| `force` | Re-fetch a URL even when an existing source record already has that URL. |
+
+The response contains `counts` and `results`. Result statuses are:
+
+| Status | Meaning |
+|---|---|
+| `skipped` | Planned only, normally because `dry_run` was true. |
+| `fetched` | URL was resolved, page text was fetched, chunks/vectors were created, and topics were linked. |
+| `linked` | Existing source URL was reused and linked to the requested topics. |
+| `failed` | This reading failed, but the remaining readings continued. Check `error`. |
+
+Verify retrieval from fetched readings:
+
+```bash
+curl -X POST http://localhost:48673/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"query":"multi-agent orchestration communication protocols","topic_id":"topic-1.3","k":5}'
+```
+
+From a Docker Compose runtime, run the CLI inside the container so it uses the same mounted
+database and vector store:
+
+```bash
+docker compose exec app ncp-aai fetch-readings --domain domain-1 --limit 2 --json
+```
+
+For local backend development outside Docker, use the same repo-local environment variables shown
+in the Local Development section, then run:
+
+```bash
+uv run ncp-aai import-objectives
+uv run ncp-aai fetch-readings --domain domain-1 --limit 2 --dry-run --json
+uv run ncp-aai fetch-readings --domain domain-1 --limit 2 --json
+```
+
+Live fetching requires outbound network access. One failed URL does not stop the rest of the batch.
+
 Run a local investigation. If the app is running through Docker Compose, run the command inside the
 container so it uses the same mounted database, vector store, inbox, and vault as the web app:
 
