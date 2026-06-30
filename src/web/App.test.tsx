@@ -4,6 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+const mermaidRenderMock = vi.hoisted(() => vi.fn());
+
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: mermaidRenderMock,
+  },
+}));
+
 const objectivesPayload = {
   domains: [
     {
@@ -66,7 +75,7 @@ const topicPayload = {
     {
       id: "note-1",
       title: "Control loop notes",
-      body: "## Agent loops\n\nAgents combine planning, tools, memory, and feedback loops.\n\n- Keep state visible",
+      body: "## Agent loops\n\nAgents combine planning, tools, memory, and feedback loops.\n\n```mermaid\nmindmap\n  root((Agent architecture [chunk-root]))\n    Key concepts [chunk-key]\n      Capability clarity [chunk-capability]\n    Feedback loops [chunk-feedback]\n```\n\n- Keep state visible",
       provider: "codex",
       model: "gpt-integrated",
       vault_path: "Agent architecture.md",
@@ -129,6 +138,9 @@ function json(data: unknown, init?: ResponseInit) {
 }
 
 beforeEach(() => {
+  mermaidRenderMock.mockResolvedValue({
+    svg: '<svg role="img" aria-label="Rendered topic mind map"><text>Key concepts</text><text>Capability clarity</text></svg>',
+  });
   globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/health") return json({ status: "ok", version: "0.1.0", database: { status: "ok", path: "/data/app.db" }, vector_store: { status: "ok", backend: "sqlite", path: "/data/chroma" }, paths: {} });
@@ -181,6 +193,31 @@ describe("NCP-AAI frontend", () => {
     expect(screen.getByText("Trace a workflow")).toBeInTheDocument();
     expect(screen.getByText("Clarify memory types.")).toBeInTheDocument();
     expect(screen.queryByText("Job history")).not.toBeInTheDocument();
+  });
+
+  it("renders Mermaid topic mind maps with a readable outline and source disclosure", async () => {
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    expect(await screen.findByLabelText("Mind map")).toBeInTheDocument();
+    expect(await screen.findAllByText("Key concepts")).toHaveLength(2);
+    expect(screen.getAllByText("Capability clarity")).toHaveLength(2);
+    expect(screen.getByText("chunk-key")).toBeInTheDocument();
+    expect(screen.getByText("chunk-capability")).toBeInTheDocument();
+
+    const source = screen.getByText("Source").closest("details") as HTMLElement;
+    expect(within(source).getByText(/root\(\(Agent architecture \[chunk-root\]\)/)).toBeInTheDocument();
+    expect(mermaidRenderMock).toHaveBeenCalledWith(expect.any(String), expect.not.stringContaining("[chunk-key]"));
+  });
+
+  it("keeps the mind map outline available when Mermaid rendering fails", async () => {
+    mermaidRenderMock.mockRejectedValueOnce(new Error("Renderer failed"));
+
+    render(<App initialEntries={["/topics/topic-1.1"]} />);
+
+    expect(await screen.findByText(/Visual renderer unavailable/)).toBeInTheDocument();
+    expect(screen.getByText("Key concepts")).toBeInTheDocument();
+    expect(screen.getByText("Capability clarity")).toBeInTheDocument();
+    expect(screen.getByText("Outline fallback")).toBeInTheDocument();
   });
 
   it("starts note regeneration from the topic page and shows host bridge status", async () => {

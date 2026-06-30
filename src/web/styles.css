@@ -451,6 +451,128 @@ a {
   padding-left: 20px;
 }
 
+.code-block {
+  max-width: 100%;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mind-map-block {
+  max-width: min(100%, 980px);
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.mind-map-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.mind-map-header h3,
+.mind-map-header p,
+.mind-map-outline h4 {
+  margin: 0;
+}
+
+.mind-map-header h3,
+.mind-map-outline h4 {
+  font-size: 15px;
+}
+
+.mind-map-header p {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.mind-map-canvas {
+  min-height: 240px;
+  max-height: 560px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.mind-map-canvas svg {
+  min-width: 720px;
+  max-width: none;
+  height: auto;
+  display: block;
+}
+
+.mind-map-fallback {
+  padding: 10px 12px;
+  border: 1px solid oklch(0.78 0.07 80);
+  border-radius: var(--radius);
+  background: oklch(0.96 0.035 80);
+  color: oklch(0.34 0.07 80);
+  font-size: 13px;
+}
+
+.mind-map-outline {
+  display: grid;
+  gap: 8px;
+}
+
+.mind-map-outline ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mind-map-outline li {
+  min-height: 30px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  padding-left: calc(8px + (var(--depth) * 18px));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.mind-map-outline li span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chunk-badge {
+  flex: 0 0 auto;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mind-map-source {
+  display: grid;
+  gap: 8px;
+}
+
+.mind-map-source summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--color-primary-strong);
+  font-weight: 600;
+}
+
 .citation-list {
   display: grid;
   gap: 8px;
@@ -718,9 +840,18 @@ textarea::placeholder {
 
   .objective-row,
   .result-meta,
+  .mind-map-header,
   .section-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .mind-map-block {
+    padding: 10px;
+  }
+
+  .mind-map-canvas {
+    min-height: 200px;
   }
 
   .key-value div {

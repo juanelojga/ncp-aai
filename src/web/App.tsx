@@ -15,7 +15,7 @@ import {
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
-import { createElement, FormEvent, ReactNode, useMemo, useState } from "react";
+import { createElement, FormEvent, ReactNode, useEffect, useId, useMemo, useState, type CSSProperties } from "react";
 import { NavLink, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -370,8 +370,99 @@ function MarkdownBody({ body }: { body: string }) {
             </ul>
           );
         }
+        if (block.type === "code") {
+          if (block.language === "mermaid" || isMermaidMindmap(block.text)) {
+            return <MindMapBlock key={index} source={block.text} />;
+          }
+          return (
+            <pre className="code-block" key={index}>
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
         return <p key={index}>{renderInline(block.text)}</p>;
       })}
+    </div>
+  );
+}
+
+let mermaidReady = false;
+
+function MindMapBlock({ source }: { source: string }) {
+  const renderId = useId().replace(/:/g, "");
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isMindmap = isMermaidMindmap(source);
+  const outline = useMemo(() => parseMindmapOutline(source), [source]);
+
+  useEffect(() => {
+    if (!isMindmap) return;
+    let cancelled = false;
+    setSvg(null);
+    setError(null);
+
+    async function renderMindmap() {
+      try {
+        const { default: mermaid } = await import("mermaid");
+        if (!mermaidReady) {
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base" });
+          mermaidReady = true;
+        }
+        const result = await mermaid.render(`mindmap-${renderId}`, cleanMermaidLabels(source));
+        if (!cancelled) setSvg(result.svg);
+      } catch (renderError) {
+        if (!cancelled) setError(renderError instanceof Error ? renderError.message : "Mind map rendering failed.");
+      }
+    }
+
+    void renderMindmap();
+    return () => {
+      cancelled = true;
+    };
+  }, [isMindmap, renderId, source]);
+
+  if (!isMindmap) {
+    return (
+      <pre className="code-block">
+        <code>{source}</code>
+      </pre>
+    );
+  }
+
+  return (
+    <section className="mind-map-block" aria-label="Mind map">
+      <div className="mind-map-header">
+        <div>
+          <h3>Mind map</h3>
+          <p>Visual topic structure with cited chunk markers cleaned from the diagram labels.</p>
+        </div>
+        {error ? <Badge>Outline fallback</Badge> : <Badge>{svg ? "Rendered" : "Rendering"}</Badge>}
+      </div>
+      {svg && !error ? <div className="mind-map-canvas" dangerouslySetInnerHTML={{ __html: svg }} /> : null}
+      {error ? <div className="mind-map-fallback" role="status">Visual renderer unavailable. The outline and source remain available.</div> : null}
+      {outline.length ? <MindMapOutline nodes={outline} /> : null}
+      <details className="mind-map-source">
+        <summary>Source</summary>
+        <pre className="code-block">
+          <code>{source}</code>
+        </pre>
+      </details>
+    </section>
+  );
+}
+
+function MindMapOutline({ nodes }: { nodes: MindMapNode[] }) {
+  return (
+    <div className="mind-map-outline">
+      <h4>Outline</h4>
+      <ul>
+        {nodes.map((node, index) => (
+          <li key={`${node.label}-${index}`} style={{ "--depth": node.depth } as CSSProperties}>
+            <span>{node.label}</span>
+            {node.chunk ? <span className="chunk-badge">{node.chunk}</span> : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -813,11 +904,19 @@ function citationPageLabel(citation: { page_start: number | null; page_end: numb
 type MarkdownBlock =
   | { type: "heading"; text: string; level: number }
   | { type: "paragraph"; text: string }
-  | { type: "list"; items: string[] };
+  | { type: "list"; items: string[] }
+  | { type: "code"; text: string; language: string | null };
+
+type MindMapNode = {
+  label: string;
+  depth: number;
+  chunk: string | null;
+};
 
 function parseMarkdownBlocks(body: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];
   let listItems: string[] = [];
+  let codeFence: { language: string | null; lines: string[] } | null = null;
 
   function flushList() {
     if (listItems.length) {
@@ -827,6 +926,22 @@ function parseMarkdownBlocks(body: string): MarkdownBlock[] {
   }
 
   for (const rawLine of body.split("\n")) {
+    const fence = rawLine.match(/^```\s*([A-Za-z0-9_-]+)?\s*$/);
+    if (fence) {
+      if (codeFence) {
+        blocks.push({ type: "code", language: codeFence.language, text: codeFence.lines.join("\n").trimEnd() });
+        codeFence = null;
+      } else {
+        flushList();
+        codeFence = { language: fence[1]?.toLowerCase() ?? null, lines: [] };
+      }
+      continue;
+    }
+    if (codeFence) {
+      codeFence.lines.push(rawLine);
+      continue;
+    }
+
     const line = rawLine.trim();
     if (!line) {
       flushList();
@@ -847,5 +962,66 @@ function parseMarkdownBlocks(body: string): MarkdownBlock[] {
     blocks.push({ type: "paragraph", text: line });
   }
   flushList();
+  if (codeFence) {
+    blocks.push({ type: "code", language: codeFence.language, text: codeFence.lines.join("\n").trimEnd() });
+  }
   return blocks;
+}
+
+function isMermaidMindmap(source: string) {
+  return source.split("\n").some((line) => line.trim().toLowerCase() === "mindmap");
+}
+
+function cleanMermaidLabels(source: string) {
+  return source.split("\n").map(removeChunkSuffix).join("\n");
+}
+
+function removeChunkSuffix(value: string) {
+  return value.replace(/\s*\[chunk-[^\]]+\]/gi, "");
+}
+
+function extractChunkLabel(value: string) {
+  return value.match(/\[(chunk-[^\]]+)\]/i)?.[1] ?? null;
+}
+
+function parseMindmapOutline(source: string): MindMapNode[] {
+  const contentLines = source.split("\n").filter((line) => line.trim() && line.trim().toLowerCase() !== "mindmap");
+  const indentLevels = [...new Set(contentLines.map((line) => leadingWhitespace(line)).sort((a, b) => a - b))];
+  return contentLines
+    .map((line) => {
+      const label = cleanMindmapLine(line);
+      if (!label) return null;
+      const indent = leadingWhitespace(line);
+      return {
+        label,
+        depth: Math.max(0, indentLevels.indexOf(indent)),
+        chunk: extractChunkLabel(line),
+      };
+    })
+    .filter((node): node is MindMapNode => Boolean(node));
+}
+
+function leadingWhitespace(line: string) {
+  let count = 0;
+  for (const char of line) {
+    if (char === " ") count += 1;
+    else if (char === "\t") count += 2;
+    else break;
+  }
+  return count;
+}
+
+function cleanMindmapLine(line: string) {
+  let text = removeChunkSuffix(line.trim()).replace(/\s*:::.+$/, "").trim();
+  text = unwrapMermaidShape(text);
+  text = text.replace(/^[-*]\s+/, "").trim();
+  return text;
+}
+
+function unwrapMermaidShape(value: string): string {
+  const idShape = value.match(/^[A-Za-z0-9_-]+\s*(\(\(|\[\[|\[|\(|\{\{)(.*?)(\)\)|\]\]|\]|\)|\}\})$/);
+  if (idShape) return idShape[2].trim();
+  const shape = value.match(/^(\(\(|\[\[|\[|\(|\{\{)(.*?)(\)\)|\]\]|\]|\)|\}\})$/);
+  if (shape) return shape[2].trim();
+  return value;
 }
