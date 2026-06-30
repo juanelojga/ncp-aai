@@ -1,5 +1,6 @@
 import json
 import sys
+import tomllib
 
 import pytest
 from sqlalchemy import func, select
@@ -214,9 +215,63 @@ def test_domain_host_bridge_writes_request_with_study_sections(app_settings):
     )
     request = json.loads(request_path.read_text(encoding="utf-8"))
     assert request["topic_id"] == "topic-1.2"
-    assert "Practical explanation" in request["instructions"]
-    assert "Study guide" in request["instructions"]
-    assert "Tradeoffs/failure modes" in request["instructions"]
+    instructions = request["instructions"]
+    assert "concise" not in instructions.lower()
+    assert "beginner deep-dive" in instructions
+    assert "1,500-2,500 words" in instructions
+    assert "explanatory paragraphs before any bullet lists" in instructions
+    assert "worked example" in instructions
+    assert "misconception or failure-mode explanation" in instructions
+    for section in (
+        "Practical explanation",
+        "Study guide",
+        "Key concepts",
+        "Architecture/design patterns",
+        "Examples",
+        "Tradeoffs/failure modes",
+        "Exam cues",
+        "Mind map",
+        "Gaps",
+    ):
+        assert section in instructions
+
+
+def test_domain_study_material_agent_contract_matches_host_bridge(app_settings):
+    _seed_domain_one_source(app_settings, topic_ids=["topic-1.2"])
+
+    result = generate_domain_study_material(
+        "domain-1",
+        mode="host_codex",
+        auto_ingest=False,
+        topic_ids=["topic-1.2"],
+        settings=app_settings,
+    )
+    request_path = (
+        app_settings.codex_output_dir
+        / "requests"
+        / f"{result['created'][0]['job_id']}.json"
+    )
+    bridge_instructions = json.loads(request_path.read_text(encoding="utf-8"))["instructions"]
+    agent_contract = tomllib.loads(
+        (app_settings.project_root / ".codex/agents/ncp-aai-domain-study-material.toml").read_text(
+            encoding="utf-8"
+        )
+    )["developer_instructions"]
+
+    shared_contract_phrases = (
+        "beginner deep-dive",
+        "1,500-2,500 words",
+        "explanatory paragraphs before",
+        "worked example",
+        "misconception",
+        "failure-mode",
+        "Exam cues",
+        "Mind map",
+        "retrieved",
+    )
+    for phrase in shared_contract_phrases:
+        assert phrase.lower() in bridge_instructions.lower()
+        assert phrase.lower() in agent_contract.lower()
 
 
 def test_host_codex_response_ingests_new_note_version(app_settings):

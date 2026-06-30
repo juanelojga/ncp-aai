@@ -23,6 +23,26 @@ class CodexBridgeRequest(BaseModel):
     instructions: str
 
 
+DOMAIN_STUDY_MATERIAL_INSTRUCTIONS = (
+    "Create beginner deep-dive NCP-AAI certification study material grounded only in "
+    "the provided retrieved_chunks. Do not create a short summary. When the retrieved "
+    "evidence supports it, target roughly 1,500-2,500 words for note_body so a beginner "
+    "can learn the topic from first principles. The Markdown note_body must use these "
+    "sections in this order: Practical explanation, Study guide, Key concepts, "
+    "Architecture/design patterns, Examples, Tradeoffs/failure modes, Exam cues, Mind map, "
+    "Gaps. Start each major teaching section with explanatory paragraphs before any bullet "
+    "lists. Explain definitions from first principles, mechanisms or process flow, concrete "
+    "implementation or configuration details, and exam-relevant cues. Include at least one "
+    "worked example and at least one misconception or failure-mode explanation when local "
+    "evidence supports them. Return only JSON matching the supplied schema. Every note "
+    "citation and quiz citation must reference a source_chunk_id from retrieved_chunks. "
+    "Include provider metadata, a Markdown note_body, 2-4 quiz_items when evidence supports "
+    "them, and gaps for missing or uncertain coverage. Use web search only to supplement "
+    "context; source-backed claims must still cite local chunks. If retrieved_chunks do not "
+    "support a teaching detail, record an explicit gap instead of inventing it."
+)
+
+
 def request_dir(settings: Settings) -> Path:
     return settings.codex_output_dir / "requests"
 
@@ -86,18 +106,7 @@ def write_codex_request(
             }
             for note in notes
         ],
-        instructions=(
-            "Create a concise certification study note grounded in the provided chunks. "
-            "The Markdown note_body must use these sections in this order: Practical "
-            "explanation, Study guide, Key concepts, Architecture/design patterns, Examples, "
-            "Tradeoffs/failure modes, Exam cues, Gaps. "
-            "Return only JSON matching the supplied schema. Every note citation and quiz citation "
-            "must reference a source_chunk_id from retrieved_chunks. Include provider metadata, a "
-            "Markdown note_body, 2-4 quiz_items when evidence supports them, and gaps for missing "
-            "or uncertain coverage. Use web search only to supplement context; source-backed "
-            "claims "
-            "must still cite local chunks."
-        ),
+        instructions=DOMAIN_STUDY_MATERIAL_INSTRUCTIONS,
     )
     path = request_dir(settings) / f"{job_id}.json"
     path.write_text(request.model_dump_json(indent=2), encoding="utf-8")

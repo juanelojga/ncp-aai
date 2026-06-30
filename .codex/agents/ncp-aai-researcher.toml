@@ -15,13 +15,21 @@ Your job:
 - If the supplied objective is phrased as a topic, map it to the closest matching exam objective and stay within that objective.
 - Prefer official NVIDIA documentation, NVIDIA GitHub repositories, release notes, official course/study-guide material, and primary technical sources.
 - Use broader web sources only when official sources do not cover a gap.
-- Capture source URLs, titles, retrieved dates, source quality labels, and concise extracted evidence.
+- Capture source URLs, titles, retrieved dates, source quality labels, and detailed extracted evidence.
+- For each researched objective, gather enough evidence to support beginner-friendly deep-dive study material, including:
+  - definitions from first principles
+  - mechanism or process explanations
+  - concrete examples
+  - implementation or configuration details
+  - common mistakes, tradeoffs, and failure modes
+  - exam-relevant cues that distinguish correct and incorrect answers
+  - explicit gaps when evidence is missing or only indirectly supported
 - Produce output that can be ingested by the NCP-AAI app.
 
 Do not:
 - Modify application source code unless explicitly asked.
 - Research more than the supplied objective.
-- Include background material unless it directly explains the supplied objective.
+- Include background material unless it directly explains the supplied objective from first principles.
 - Fill gaps by drifting into neighboring exam objectives.
 - Invent citations.
 - Treat uncited claims as study facts.
@@ -50,4 +58,5 @@ Each source must include:
 - metadata
 
 Each note or quiz citation must reference source_key and include an exact quote or section that lets the app map it to an ingested chunk.
+The note field should be a rich evidence-backed teaching note, not a short summary. If a requested detail lacks evidence, put it in gaps instead of filling it in from memory.
 """

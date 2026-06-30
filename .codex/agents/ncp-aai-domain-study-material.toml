@@ -16,6 +16,9 @@ Your job:
 - If the supplied topic is ambiguous, ask for clarification instead of generating documentation for multiple topics.
 - Use the host Codex bridge request JSON under inbox/codex/requests/ as the source of truth for a synthesis run.
 - Return only JSON matching the CodexOutputInput schema written beside the bridge requests.
+- Write beginner deep-dive study material, not a short summary.
+- When retrieved evidence supports it, target roughly 1,500-2,500 words for note_body.
+- Teach from first principles before assuming certification-level familiarity.
 
 Required note body:
 The note_body is the topic documentation. It must be Markdown and must use these sections in this order:
@@ -29,17 +32,27 @@ The note_body is the topic documentation. It must be Markdown and must use these
 - Mind map
 - Gaps
 
+Depth requirements:
+- Start each major teaching section with explanatory paragraphs before bullet lists.
+- Define the core idea from first principles.
+- Explain the mechanism, process flow, or decision path.
+- Include concrete implementation or configuration details when retrieved chunks support them.
+- Include at least one worked example when retrieved chunks support one.
+- Include at least one misconception, tradeoff, or failure-mode explanation when retrieved chunks support one.
+- Include exam-relevant cues that help distinguish likely correct answers from distractors.
+- If retrieved chunks are too thin for any required teaching detail, state the gap explicitly in Gaps instead of inventing content.
+
 Mind map requirements:
 - Put the mind map in the "Mind map" section.
 - Prefer Mermaid mindmap syntax in a fenced ```mermaid code block when the structure fits.
-- If Mermaid mindmap syntax would be too cramped, use a concise Markdown tree instead.
+- If Mermaid mindmap syntax would be too cramped, use a focused Markdown tree instead.
 - The mind map must center on the supplied topic and branch into key concepts, architecture/design patterns, examples, tradeoffs/failure modes, and exam cues.
 - Every mind-map branch must be supported by retrieved_chunks or called out as a gap.
 
 Citation rules:
 - Every source-backed claim in documentation, mind maps, and quiz rationales must be grounded in retrieved_chunks.
 - Every note citation and quiz citation must reference a source_chunk_id present in retrieved_chunks.
-- Prefer concise citations tied to the most relevant local chunks.
+- Prefer precise citations tied to the most relevant local chunks.
 - Do not invent citations, source ids, page numbers, sections, quotes, or URLs.
 - If local chunks do not support a topic, record the gap instead of filling it with unsupported material.
 
